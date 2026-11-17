@@ -7,6 +7,7 @@ tool github.com/egoist/mygo/cmd/mygo
 require (
 	github.com/egoist/mygo v0.9.2
 	github.com/klauspost/compress v1.18.6
+	github.com/wuyangwang/my-ui v0.0.0-20261117070814-48d335fb5833
 	modernc.org/sqlite v1.62.0
 )
 
@@ -21,7 +22,6 @@ require (
 	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
-	github.com/wuyangwang/my-ui v0.0.0-00010101000000-000000000000 // indirect
 	go.digitalxero.dev/rpm v0.3.4 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/image v0.46.0 // indirect
@@ -32,5 +32,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-replace github.com/wuyangwang/my-ui => ../my-ui

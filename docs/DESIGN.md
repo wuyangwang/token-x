@@ -11,7 +11,7 @@ AI Agent Token 用量管理器 —— 查询、删除本地 AI 编程 agent（Co
 | 项 | 选择 | 说明 |
 |---|---|---|
 | 语言 | Go 1.27+（纯 Go，无 cgo） | |
-| UI | mygo `package ui`（GPU 自绘原生 UI，无 webview） | `E:\work\test-demo\mygo` |
+| UI | mygo `package ui`（GPU 自绘原生 UI，无 webview） | `github.com/egoist/mygo` |
 | 组件库 | my-ui（shadcn 风格设计系统，橙色强调色，明暗可切换） | `github.com/wuyangwang/my-ui` |
 | 数据读取 | 实时读取原始数据（v1 不建索引库） | |
 | 数据源架构 | `DataSource` 插件接口，实现 codex / opencode / claude / gemini | |
