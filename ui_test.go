@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
-	myui "github.com/wuyangwang/my-ui"
 
 	"token-x/core"
 )
@@ -131,8 +130,8 @@ func TestThemeToggle(t *testing.T) {
 	if err := tt.Click("切换到深色"); err != nil {
 		t.Fatalf("theme click: %v", err)
 	}
-	if a.appearance != myui.AppearanceDark {
-		t.Errorf("appearance %v after clicking the moon", a.appearance)
+	if !a.dark {
+		t.Errorf("dark = false after clicking the moon")
 	}
 	if !tt.HasText("切换到浅色") {
 		t.Errorf("the switch did not flip its hint, texts %q", tt.Texts())

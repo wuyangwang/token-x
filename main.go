@@ -46,8 +46,10 @@ type app struct {
 
 	period int // index into periods
 
-	// appearance follows the system until the user flips the switch.
-	appearance myui.Appearance
+	// dark mirrors mygo.Theme only for the toggle's icon. The content
+	// follows mygo.Theme through myui.AppearanceSystem, so switching it
+	// changes the title bar and the content together.
+	dark bool
 
 	// Filters. Empty strings mean "all".
 	fSource  string
@@ -95,6 +97,7 @@ func windowMain() {
 	a.reg = newRegistry(a.prices)
 
 	mygo.App.WhenReady(func() {
+		a.dark = mygo.Theme.IsDark()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Token X",
 			Width:     640,
@@ -161,7 +164,7 @@ func hasSource(sessions []core.Session, source string) bool {
 
 // view builds one frame.
 func (a *app) view(c *ui.Context) {
-	t := myui.Apply(c, myui.Options{Appearance: a.appearance, Palette: myui.PaletteOrange})
+	t := myui.Apply(c, myui.Options{Appearance: myui.AppearanceSystem, Palette: myui.PaletteOrange})
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		a.header(c, t)
@@ -217,16 +220,19 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 				a.reload()
 			}
 			icon, hint := icons.Moon(), "切换到深色"
-			if a.appearance == myui.AppearanceDark {
+			if a.dark {
 				icon, hint = icons.Sun(), "切换到浅色"
 			}
 			appearance := myui.NewButton(c.Key("appearance"), "").Icon(icon).Ghost().Sm().Label(hint)
 			appearance.AlignSelf(ui.Center)
 			if appearance.Clicked() {
-				if a.appearance == myui.AppearanceDark {
-					a.appearance = myui.AppearanceLight
-				} else {
-					a.appearance = myui.AppearanceDark
+				a.dark = !a.dark
+				if a.win != nil {
+					if a.dark {
+						mygo.Theme.SetSource(mygo.ThemeDark)
+					} else {
+						mygo.Theme.SetSource(mygo.ThemeLight)
+					}
 				}
 			}
 		})
