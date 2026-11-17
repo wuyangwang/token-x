@@ -1,0 +1,42 @@
+name: Release (Windows)
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build installer
+        run: go tool mygo build
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content mygo.json | ConvertFrom-Json).version
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: token-x ${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            build/windows-amd64/token-x-setup-*.exe
+            build/windows-amd64/token-x.exe
