@@ -202,11 +202,14 @@ func (a *app) view(c *ui.Context) {
 func (a *app) titleBar(c *ui.Context, t *ui.Theme) {
 	bar := c.TitleBar()
 	drag := ui.Row(c).FillWidth().Height(max(bar.Height, 36)).
-		Padding(0, 0, 0, t.Space(4)).AlignItems(ui.Center).DragWindow()
+		Padding(0, t.Space(4), 0, t.Space(4)).Gap(t.Space(2)).AlignItems(ui.Center).DragWindow()
 	if drag.WindowDoubleClicked() {
 		a.toggleMaximize()
 	}
 	drag.Children(func() {
+		if appIcon != nil {
+			ui.Image(c, appIcon).Size(18, 18).Radius(4)
+		}
 		ui.Text(c, "Token X").FontSize(myui.TextSize(t, myui.TextSm)).Bold()
 		ui.Box(c).Grow(1)
 
