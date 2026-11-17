@@ -9,6 +9,7 @@ import (
 // CLI resolves its own data directory.
 func runCLI(dataDir string, args ...string) (string, error) {
 	cmd := exec.Command("opencode", args...)
+	hideConsole(cmd)
 	if dataDir != "" {
 		cmd.Env = append(os.Environ(),
 			"XDG_DATA_HOME="+parentOf(dataDir))
