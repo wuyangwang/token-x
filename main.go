@@ -99,13 +99,14 @@ func windowMain() {
 	mygo.App.WhenReady(func() {
 		a.dark = mygo.Theme.IsDark()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:     "Token X",
-			Width:     640,
-			Height:    620,
-			MinWidth:  560,
-			MinHeight: 480,
-			StateKey:  "main",
-			Content:   ui.View(a.view),
+			Title:         "Token X",
+			Width:         640,
+			Height:        620,
+			MinWidth:      560,
+			MinHeight:     480,
+			TitleBarStyle: mygo.TitleBarHidden,
+			StateKey:      "main",
+			Content:       ui.View(a.view),
 		})
 		a.reload()
 	})
@@ -167,6 +168,7 @@ func (a *app) view(c *ui.Context) {
 	t := myui.Apply(c, myui.Options{Appearance: myui.AppearanceSystem, Palette: myui.PaletteOrange})
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
+		a.titleBar(c, t)
 		a.header(c, t)
 		a.usage(c, t)
 		a.divider(c, t)
@@ -190,6 +192,19 @@ func (a *app) view(c *ui.Context) {
 	if a.toast.shown && a.toast.Title != "" {
 		a.toast.Title, a.toast.Desc = "", "" // shown; clear on this frame
 	}
+}
+
+// titleBar draws the window title inside the content, where it follows the
+// app's theme. The native Windows title bar is hidden: DWM kept it light even
+// after mygo.Theme switched to dark, so the frame is drawn here instead. The
+// strip reserves the room of the system window buttons and drags the window.
+func (a *app) titleBar(c *ui.Context, t *ui.Theme) {
+	bar := c.TitleBar()
+	ui.Row(c).FillWidth().Height(max(bar.Height, 32)).
+		Padding(0, bar.Right+12, 0, bar.Left+12).
+		AlignItems(ui.Center).DragWindow().Background(t.Background).Children(func() {
+		ui.Text(c, "Token X").FontSize(myui.TextSize(t, myui.TextSm)).Bold()
+	})
 }
 
 func (a *app) divider(c *ui.Context, t *ui.Theme) {
