@@ -8,10 +8,6 @@ import (
 	"time"
 
 	"token-x/core"
-	"token-x/providers/claude"
-	"token-x/providers/codex"
-	"token-x/providers/gemini"
-	"token-x/providers/opencode"
 )
 
 // cliList implements the M1 acceptance: list every session with usage and
@@ -19,10 +15,7 @@ import (
 func cliList() error {
 	home, _ := os.UserHomeDir()
 	prices := core.LoadPrices(filepath.Join(home, ".token-x"))
-	reg := core.NewRegistry(
-		codex.New("", prices), opencode.New(""),
-		claude.New("", prices), gemini.New("", prices),
-	)
+	reg := newRegistry(prices)
 
 	sessions, err := reg.AllSessions(core.Filter{IncludeArchived: true})
 	if err != nil {

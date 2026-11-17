@@ -24,10 +24,6 @@ import (
 
 	"token-x/core"
 	_ "token-x/locales" // register zh-Hans so the UI and installer are Chinese
-	"token-x/providers/claude"
-	"token-x/providers/codex"
-	"token-x/providers/gemini"
-	"token-x/providers/opencode"
 )
 
 // heatLevels is the 少→多 ramp, from faintest to full accent.
@@ -96,10 +92,7 @@ func windowMain() {
 	a := &app{}
 	home, _ := os.UserHomeDir()
 	a.prices = core.LoadPrices(filepath.Join(home, ".token-x"))
-	a.reg = core.NewRegistry(
-		codex.New("", a.prices), opencode.New(""),
-		claude.New("", a.prices), gemini.New("", a.prices),
-	)
+	a.reg = newRegistry(a.prices)
 
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
