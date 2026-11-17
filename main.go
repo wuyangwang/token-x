@@ -99,14 +99,15 @@ func windowMain() {
 	mygo.App.WhenReady(func() {
 		a.dark = mygo.Theme.IsDark()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:         "Token X",
-			Width:         640,
-			Height:        620,
-			MinWidth:      560,
-			MinHeight:     480,
-			TitleBarStyle: mygo.TitleBarHidden,
-			StateKey:      "main",
-			Content:       ui.View(a.view),
+			Title:           "Token X",
+			Width:           640,
+			Height:          620,
+			MinWidth:        560,
+			MinHeight:       480,
+			TitleBarStyle:   mygo.TitleBarHidden,
+			BackgroundColor: "light-dark(#ffffff, #09090b)", // my-ui 的浅/深背景, 避免边缘露出白色窗口底色
+			StateKey:        "main",
+			Content:         ui.View(a.view),
 		})
 		setWindowBorderColor(a.win.NativeHandle(), a.dark)
 		a.reload()
@@ -281,7 +282,7 @@ func (a *app) periodSessions() ([]core.Session, int) {
 	start := time.Now().Local().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
 	var out []core.Session
 	for _, s := range a.session {
-		if !s.Updated.Local().Truncate(24*time.Hour).Before(start) {
+		if !s.Updated.Local().Truncate(24 * time.Hour).Before(start) {
 			out = append(out, s)
 		}
 	}
