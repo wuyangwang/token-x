@@ -51,11 +51,11 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 	a.rowsNow = rows
 	a.rows.Key = func(row int) any { return rows[row].ID }
 	cols := []ui.TableColumn{
-		{Title: "会话", MinWidth: 160},
-		{Title: "模型", Width: 110},
-		{Title: "Tokens", Width: 75, Align: ui.End},
-		{Title: "金额", Width: 72, Align: ui.End},
-		{Title: "时间", Width: 88},
+		{Title: "会话", MinWidth: 150},
+		{Title: "模型", Width: 95},
+		{Title: "Tokens", Width: 68, Align: ui.End},
+		{Title: "金额", Width: 68, Align: ui.End},
+		{Title: "时间", Width: 104},
 	}
 	a.rows.Selection = &a.chosen
 	ui.Table(c, &a.rows, cols, len(rows), func(row, col int) {
@@ -66,7 +66,11 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 			ui.Text(c, s.Model).SingleLine().TruncateMiddle().Tooltip(s.Model)
 			return
 		}
-		ui.Text(c, sessionCell(s, col)).SingleLine()
+		cell := ui.Text(c, sessionCell(s, col)).SingleLine()
+		if col == 0 {
+			cell = cell.Tooltip(sessionCell(s, col))
+		}
+		cell
 	}).Grow(1)
 }
 
