@@ -11,83 +11,51 @@ import (
 	"token-x/core"
 )
 
-// sessionsPage is the session list: filters on top, the table below, and
-// the delete action in a sticky toolbar.
-func (a *app) sessionsPage(c *ui.Context, t *ui.Theme) {
-	// Filters.
-	ui.Row(c).FillWidth().Gap(t.Space(2.5)).AlignItems(ui.Center).Children(func() {
+// sessionsSection is the filter row and the table — the working area of
+// the window.
+func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
+	// Filters, one compact row.
+	ui.Row(c).FillWidth().PaddingX(t.Space(6)).PaddingY(t.Space(3)).
+		Gap(t.Space(2.5)).AlignItems(ui.Center).Children(func() {
 		myui.NewInput(c.Key("query"), &a.fQuery).Outline().Sm().
-			Width(t.Space(56)).PrefixIcon(icons.Search()).
-			Placeholder("搜索标题…").Label("搜索标题")
+			Width(t.Space(44)).PrefixIcon(icons.Search()).
+			Placeholder("搜索…").Label("搜索")
 
 		ui.Box(c).Grow(1)
-
-		source := a.fSource
-		opts := []myui.SelectOption{{Label: "全部来源", Value: ""}}
-		for _, s := range a.reg.Sources {
-			opts = append(opts, myui.SelectOption{Label: s.Name(), Value: s.Name()})
-		}
-		myui.NewSelect(c.Key("source"), &source, opts).Outline().Sm().Width(t.Space(32)).Label("来源")
-		if source != a.fSource {
-			a.fSource = source
-			a.onFilterChange()
-		}
 
 		project := a.fProject
 		popts := []myui.SelectOption{{Label: "全部项目", Value: ""}}
 		for _, p := range core.Distinct(a.session, func(s core.Session) string { return s.Project }) {
 			popts = append(popts, myui.SelectOption{Label: shortPath(p), Value: p})
 		}
-		myui.NewSelect(c.Key("project"), &project, popts).Outline().Sm().Width(t.Space(52)).Label("项目")
+		myui.NewSelect(c.Key("project"), &project, popts).Outline().Sm().Width(t.Space(44)).Label("项目")
 		if project != a.fProject {
 			a.fProject = project
-			a.onFilterChange()
+			a.chosen.Clear()
 		}
 
-		model := a.fModel
-		mopts := []myui.SelectOption{{Label: "全部模型", Value: ""}}
-		for _, m := range core.Distinct(a.session, func(s core.Session) string { return s.Model }) {
-			mopts = append(mopts, myui.SelectOption{Label: m, Value: m})
+		source := a.fSource
+		sopts := []myui.SelectOption{{Label: "全部来源", Value: ""}}
+		for _, s := range a.reg.Sources {
+			sopts = append(sopts, myui.SelectOption{Label: s.Name(), Value: s.Name()})
 		}
-		myui.NewSelect(c.Key("model"), &model, mopts).Outline().Sm().Width(t.Space(48)).Label("模型")
-		if model != a.fModel {
-			a.fModel = model
-			a.onFilterChange()
+		myui.NewSelect(c.Key("source"), &source, sopts).Outline().Sm().Width(t.Space(36)).Label("来源")
+		if source != a.fSource {
+			a.fSource = source
+			a.chosen.Clear()
 		}
 	})
 
-	// Toolbar with the delete action.
+	// The table.
 	rows := a.filtered()
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-		summary := fmt.Sprintf("%d 个 session", len(rows))
-		if a.chosen.Len() > 0 {
-			summary += fmt.Sprintf("，已选 %d 个", a.chosen.Len())
-		}
-		ui.Text(c, summary).
-			FontSize(myui.TextSize(t, myui.TextSm)).TextColor(t.TextMuted)
-		ui.Box(c).Grow(1)
-		if a.deleting {
-			ui.Text(c, "删除中…").TextColor(t.TextMuted)
-		}
-		// The confirm modal hangs the dialog on the delete button.
-		a.confirmModal(c, t)
-	})
-
-	// Table.
-	sig := a.tableSignature()
-	if sig != a.tableSig {
-		a.tableSig = sig
-		a.chosen.Clear()
-	}
+	a.rowsNow = rows
 	a.rows.Key = func(row int) any { return rows[row].ID }
 	cols := []ui.TableColumn{
-		{Title: "标题", MinWidth: 220},
-		{Title: "来源", Width: 82},
-		{Title: "项目", MinWidth: 140},
+		{Title: "会话", MinWidth: 220},
 		{Title: "模型", Width: 150},
-		{Title: "更新时间", Width: 110},
-		{Title: "Tokens", Width: 100, Align: ui.End},
-		{Title: "金额", Width: 100, Align: ui.End},
+		{Title: "Tokens", Width: 90, Align: ui.End},
+		{Title: "金额", Width: 90, Align: ui.End},
+		{Title: "时间", Width: 96},
 	}
 	a.rows.Selection = &a.chosen
 	ui.Table(c, &a.rows, cols, len(rows), func(row, col int) {
@@ -95,31 +63,56 @@ func (a *app) sessionsPage(c *ui.Context, t *ui.Theme) {
 	}).Grow(1)
 }
 
-func (a *app) onFilterChange() {
-	a.chosen.Clear()
-	a.tableSig = a.tableSignature()
+// footer is the bottom bar: the count on the left, the delete action on
+// the right when there is something to act on.
+func (a *app) footer(c *ui.Context, t *ui.Theme) {
+	ui.Row(c).FillWidth().Height(t.Space(10)).PaddingX(t.Space(6)).
+		Gap(t.Space(3)).AlignItems(ui.Center).Children(func() {
+		count := fmt.Sprintf("%d 个 session", len(a.rowsNow))
+		if a.chosen.Len() > 0 {
+			count += fmt.Sprintf(" · 已选 %d", a.chosen.Len())
+		}
+		ui.Text(c, count).FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+		if a.loading {
+			ui.Text(c, "读取中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+		}
+		if a.deleting {
+			ui.Text(c, "删除中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+		}
+		ui.Box(c).Grow(1)
+		a.confirmModal(c, t)
+	})
 }
 
-// confirmModal is the delete-confirmation dialog, opened from the toolbar
+// filtered applies the filters.
+func (a *app) filtered() []core.Session {
+	out := a.session[:0:0]
+	for _, s := range a.session {
+		if a.fSource != "" && s.Source != a.fSource {
+			continue
+		}
+		if a.fProject != "" && s.Project != a.fProject {
+			continue
+		}
+		if a.fQuery != "" && !strings.Contains(strings.ToLower(s.Title), strings.ToLower(a.fQuery)) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// confirmModal is the delete-confirmation dialog, opened from the footer
 // delete button.
 func (a *app) confirmModal(c *ui.Context, t *ui.Theme) {
 	myui.NewModal(c, &a.confirm, func() ui.Element {
-		del := myui.NewButton(c.Key("delete"), "永久删除").
+		del := myui.NewButton(c.Key("delete"), "删除").
 			Icon(icons.Trash2()).Destructive().Sm()
 		del.Disabled(a.chosen.Len() == 0 || a.deleting)
 		return del.Element
 	}, func(panel ui.Element) {
 		panel.Label("永久删除")
-		rows := a.filtered()
-		var chosen []core.Session
-		for id := range a.chosen.All() {
-			for _, s := range rows {
-				if s.ID == id {
-					chosen = append(chosen, s)
-					break
-				}
-			}
-		}
+		chosen := a.chosenSessions()
 		if len(chosen) == 0 {
 			a.confirm = false
 			return
@@ -152,6 +145,20 @@ func (a *app) confirmModal(c *ui.Context, t *ui.Theme) {
 			})
 		})
 	})
+}
+
+// chosenSessions resolves the selection against the current rows.
+func (a *app) chosenSessions() []core.Session {
+	var out []core.Session
+	for id := range a.chosen.All() {
+		for _, s := range a.rowsNow {
+			if s.ID == id {
+				out = append(out, s)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // deleteChosen removes the sessions off the UI thread, then reloads.
@@ -199,6 +206,18 @@ func shortPath(p string) string {
 	return p
 }
 
+// sourceDot is a tiny square before the title, colored per source — the
+// same encoding the legend of a chart would use.
+func sourceDot(c *ui.Context, t *ui.Theme, source string) ui.Color {
+	switch source {
+	case "codex":
+		return t.Accent
+	case "opencode":
+		return t.Success
+	}
+	return t.TextMuted
+}
+
 func sessionCell(s core.Session, col int) string {
 	switch col {
 	case 0:
@@ -208,21 +227,17 @@ func sessionCell(s core.Session, col int) string {
 		}
 		return title
 	case 1:
-		return s.Source
-	case 2:
-		return shortPath(s.Project)
-	case 3:
 		return s.Model
-	case 4:
-		return s.Updated.Local().Format("01-02 15:04")
-	case 5:
+	case 2:
 		return fmtTokens(s.Tokens.Total())
-	case 6:
+	case 3:
 		c := fmtCost(s.Cost.Amount)
 		if s.Cost.Estimated {
 			return c + "*"
 		}
 		return c
+	case 4:
+		return s.Updated.Local().Format("01-02 15:04")
 	}
 	return ""
 }

@@ -1,11 +1,16 @@
 // token-x manages the token usage of local AI coding agents: it reads the
-// session stores of Codex and OpenCode, shows daily token and cost
-// totals, and deletes sessions for good.
+// session stores of Codex and OpenCode, shows token and cost totals, and
+// deletes sessions for good.
+//
+// The window is one column, in the manner of the usage tools it resembles
+// (ccusage, ccseva): the period's cost is the hero number, a compact bar
+// chart of the same period sits under it, and the sessions table — the
+// thing the user acts on — fills the rest. No sidebar, no settings page;
+// prices live in ~/.token-x/prices.json.
 package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,42 +27,40 @@ import (
 	"token-x/providers/opencode"
 )
 
+// periods is the segmented control at the top: what the hero, the chart
+// and the model line show.
+var periods = []string{"今日", "近 7 天", "近 30 天"}
+var periodDays = []int{1, 7, 30}
+
 // app is the state the window shows.
 type app struct {
 	win    *mygo.Window
 	reg    *core.Registry
 	prices *core.PriceTable
 
-	page int // 0 总览, 1 Sessions, 2 设置
-
 	loading bool
 	loadErr error
 	session []core.Session // all sessions, newest first
-	lastLoad time.Time
 
-	// Filters (Sessions page). Empty strings mean "all".
+	period int // index into periods
+
+	// Filters. Empty strings mean "all".
 	fSource  string
 	fProject string
-	fModel   string
 	fQuery   string
-	// The filters the current table state was built with; when they
-	// change, the row selection starts over.
-	tableSig string
 
-	rows      ui.ListState // the Sessions table
-	chosen    ui.Selection[string]
-	confirm   bool         // the delete-confirmation modal
-	deleting  bool         // a delete job is running
-	dayTab    int          // breakdown tab: 0 今日, 1 累计
-	trendDays int          // 7 or 30
+	// The sessions table. The selection holds session ids, so it follows
+	// rows across reloads and filter changes.
+	rows   ui.ListState
+	chosen ui.Selection[string]
+	// The sessions of the current frame, for cell building and actions.
+	rowsNow []core.Session
+
+	confirm  bool // the delete-confirmation modal
+	deleting bool // a delete job is running
 
 	// toast is shown once by the view, then cleared.
 	toast pendingToast
-
-	// Settings page: the price inputs are strings until saved.
-	priceDraft  map[string]*priceRow
-	priceOrder  []string
-	priceDirty  bool
 }
 
 // pendingToast is a notification the view shows once.
@@ -68,17 +71,11 @@ type pendingToast struct {
 	shown bool
 }
 
-// priceRow is one editable row of the settings price table.
-type priceRow struct {
-	Model                string
-	Input, Cached, Output string // as edited text
-	Known                bool
-}
-
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--list" {
 		if err := cliList(); err != nil {
-			log.Fatal(err)
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -86,7 +83,7 @@ func main() {
 }
 
 func windowMain() {
-	a := &app{trendDays: 30}
+	a := &app{}
 	home, _ := os.UserHomeDir()
 	a.prices = core.LoadPrices(filepath.Join(home, ".token-x"))
 	a.reg = core.NewRegistry(codex.New("", a.prices), opencode.New(""))
@@ -94,17 +91,18 @@ func windowMain() {
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:     "Token X",
-			Width:     1100,
-			Height:    720,
-			MinWidth:  820,
-			MinHeight: 520,
+			Width:     640,
+			Height:    620,
+			MinWidth:  560,
+			MinHeight: 480,
 			StateKey:  "main",
 			Content:   ui.View(a.view),
 		})
 		a.reload()
 	})
 	if err := mygo.App.Run(); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 
@@ -123,7 +121,6 @@ func (a *app) reload() {
 		win.Update(func() {
 			a.session = sessions
 			a.loadErr = err
-			a.lastLoad = time.Now()
 			a.loading = false
 			a.chosen.Clear()
 		})
@@ -135,10 +132,11 @@ func (a *app) view(c *ui.Context) {
 	t := myui.Apply(c, myui.Options{})
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
-		a.appBar(c, t)
-		ui.Row(c).Grow(1).AlignItems(ui.Stretch).Children(func() {
-			a.main(c, t)
-		})
+		a.header(c, t)
+		a.usage(c, t)
+		a.divider(c, t)
+		a.sessionsSection(c, t)
+		a.footer(c, t)
 	})
 	myui.NewToastViewport(c)
 
@@ -159,146 +157,209 @@ func (a *app) view(c *ui.Context) {
 	}
 }
 
-// appBar is the top strip: brand, the page tabs, and the refresh control.
-func (a *app) appBar(c *ui.Context, t *ui.Theme) {
-	ui.Row(c).FillWidth().Height(t.Space(13)).PaddingX(t.Space(6)).
-		Gap(t.Space(4)).AlignItems(ui.Center).Children(func() {
-		mark := ui.Box(c).Size(t.Space(6), t.Space(6)).Radius(t.Space(2)).
-			Background(t.Accent)
-		mark.Children(func() {
-			ui.Icon(c, icons.Coins()).Size(t.Space(4), t.Space(4)).
-				TextColor(t.AccentText)
-		})
-		ui.Text(c, "Token X").FontSize(myui.TextSize(t, myui.TextLg)).Bold()
+func (a *app) divider(c *ui.Context, t *ui.Theme) {
+	ui.Box(c).FillWidth().Height(1).Background(t.Border)
+}
 
-		ui.Box(c).Width(t.Space(4))
-		for _, s := range a.reg.Sources {
-			live := s.Available() == nil
-			ui.Box(c).Padding(t.Space(0.5), t.Space(2)).
-				Radius(t.Space(2)).Background(t.Surface).Children(func() {
-				text := ui.Text(c, s.Name()).FontSize(myui.TextSize(t, myui.TextXs))
-				if live {
-					text.TextColor(t.Text)
-				} else {
-					text.TextColor(t.TextMuted)
+// header is the hero line: the period's cost, the period switch, and the
+// tools. The cost is the one accent of the window.
+func (a *app) header(c *ui.Context, t *ui.Theme) {
+	tokens, cost, count := a.periodTotals()
+	est := ""
+	if cost.Estimated {
+		est = "*"
+	}
+
+	ui.Column(c).FillWidth().PaddingY(t.Space(5)).PaddingX(t.Space(6)).Gap(t.Space(2)).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.End).Children(func() {
+			ui.Column(c).Gap(0).Children(func() {
+				ui.Text(c, periodLabel(a.period)).FontSize(myui.TextSize(t, myui.TextSm)).
+					TextColor(t.TextMuted)
+				ui.Text(c, fmtCost(cost.Amount)+est).
+					FontSize(myui.TextSize(t, myui.TextXl)).Bold()
+			})
+			ui.Box(c).Grow(1)
+			a.periodSwitch(c, t)
+			refresh := myui.NewButton(c.Key("reload"), "").Icon(icons.RefreshCw()).Ghost().Sm()
+			refresh.AlignSelf(ui.End)
+			if a.loading {
+				refresh.Disabled(true)
+			}
+			if refresh.Clicked() {
+				a.reload()
+			}
+		})
+		ui.Text(c, fmt.Sprintf("%s tokens · %d 个 session", fmtTokens(tokens.Total()), count)).
+			FontSize(myui.TextSize(t, myui.TextSm)).TextColor(t.TextMuted)
+		if a.loadErr != nil {
+			ui.Text(c, "部分数据读取失败: "+a.loadErr.Error()).
+				FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.Warning)
+		}
+	})
+}
+
+func periodLabel(period int) string {
+	if period < len(periods) {
+		return periods[period] + "金额"
+	}
+	return "金额"
+}
+
+// periodSwitch is the segmented 今日 / 近 7 天 / 近 30 天 control.
+func (a *app) periodSwitch(c *ui.Context, t *ui.Theme) {
+	myui.NewTabs(c, &a.period, myui.Tab{Label: periods[0]}, myui.Tab{Label: periods[1]}, myui.Tab{Label: periods[2]})
+}
+
+// periodSessions returns the sessions whose last activity falls in the
+// chosen period, and the day count the period covers.
+func (a *app) periodSessions() ([]core.Session, int) {
+	days := periodDays[a.period]
+	start := time.Now().Local().Truncate(24*time.Hour).AddDate(0, 0, -(days - 1))
+	var out []core.Session
+	for _, s := range a.session {
+		if !s.Updated.Local().Truncate(24*time.Hour).Before(start) {
+			out = append(out, s)
+		}
+	}
+	return out, days
+}
+
+func (a *app) periodTotals() (core.TokenUsage, core.CostValue, int) {
+	sessions, _ := a.periodSessions()
+	tokens, cost := core.Totals(sessions)
+	return tokens, cost, len(sessions)
+}
+
+// usage is the contribution-style heat grid of the period (one column per
+// week, one cell per day, depth = that day's cost) plus a one-line model
+// summary.
+func (a *app) usage(c *ui.Context, t *ui.Theme) {
+	sessions, days := a.periodSessions()
+	daily := core.DailyTotals(sessions, days, time.Now())
+
+	ui.Column(c).FillWidth().PaddingX(t.Space(6)).PaddingY(t.Space(2.5)).Children(func() {
+		a.heatmap(c, t, daily)
+		a.modelLine(c, t, sessions)
+	})
+}
+
+// heatmap draws the daily cells GitHub's contribution graph does: weeks as
+// columns, Monday at the top, cell depth by cost against the period's
+// busiest day.
+func (a *app) heatmap(c *ui.Context, t *ui.Theme, daily []core.DailyUsage) {
+	const cell, gap = 12.0, 3.0
+
+	byDay := map[string]core.DailyUsage{}
+	var peak float64
+	for _, d := range daily {
+		byDay[d.Day.Format("2006-01-02")] = d
+		if d.Cost.Amount > peak {
+			peak = d.Cost.Amount
+		}
+	}
+	today := time.Now().Local().Truncate(24 * time.Hour)
+	if len(daily) == 0 {
+		return
+	}
+
+	// Pad the first week so the first day lands on its weekday row.
+	offset := (int(daily[0].Day.Weekday()) + 6) % 7 // Monday = 0
+	weeks := (offset + len(daily) + 6) / 7
+	levelAlpha := []float32{0.18, 0.38, 0.6, 1.0}
+
+	ui.Row(c).FillWidth().Gap(gap).AlignItems(ui.Start).Children(func() {
+		// Weekday labels: 一, 三, 五 as GitHub marks Mon, Wed, Fri.
+		ui.Column(c).Gap(gap).Children(func() {
+			for i := 0; i < 7; i++ {
+				label := ""
+				switch i {
+				case 0:
+					label = "一"
+				case 2:
+					label = "三"
+				case 4:
+					label = "五"
+				}
+				ui.Box(c).Size(cell, cell).Children(func() {
+					if label != "" {
+						ui.Text(c, label).FontSize(myui.TextSize(t, myui.TextXs)).
+							TextColor(t.TextMuted)
+					}
+				})
+			}
+		})
+
+		for w := 0; w < weeks; w++ {
+			week := w
+			ui.Column(c).Gap(gap).Children(func() {
+				for d := 0; d < 7; d++ {
+					idx := week*7 + d - offset
+					if idx < 0 || idx >= len(daily) {
+						ui.Box(c).Size(cell, cell).Radius(2).Background(t.Surface.Alpha(0.5))
+						continue
+					}
+					day := daily[idx]
+					date := day.Day.Format("2006-01-02")
+					if day.Day.After(today) {
+						ui.Box(c).Size(cell, cell).Radius(2).Background(t.Surface.Alpha(0.5))
+						continue
+					}
+					level := 0
+					if peak > 0 && day.Cost.Amount > 0 {
+						level = int(day.Cost.Amount/peak*4) + 1
+						if level > 4 {
+							level = 4
+						}
+					}
+					lv := level
+					box := ui.Box(c).Size(cell, cell).Radius(2)
+					if lv == 0 {
+						box.Background(t.Surface)
+						box.Tooltip(date + " · 无用量")
+					} else {
+						box.Background(t.Accent.Alpha(levelAlpha[lv-1]))
+						box.Tooltip(fmt.Sprintf("%s · %s · %s", date,
+							fmtCost(day.Cost.Amount), fmtTokens(day.Tokens.Total())+" tokens"))
+					}
 				}
 			})
 		}
 
+		// The depth legend: 少 → 多, real swatches of the same ramp.
 		ui.Box(c).Grow(1)
-
-		refresh := myui.NewButton(c.Key("reload"), "刷新").
-			Icon(icons.RefreshCw()).Ghost().Sm()
-		refresh.AlignSelf(ui.Center)
-		if a.loading {
-			refresh.Disabled(true)
-		}
-		if refresh.Clicked() {
-			a.reload()
-		}
-		status := fmt.Sprintf("%d 个 session", len(a.session))
-		if a.loading {
-			status = "读取中…"
-		}
-		ui.Text(c, status).FontSize(myui.TextSize(t, myui.TextXs)).
-			TextColor(t.TextMuted)
+		ui.Row(c).Gap(gap).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "少").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+			for _, al := range levelAlpha {
+				ui.Box(c).Size(cell, cell).Radius(2).Background(t.Accent.Alpha(al))
+			}
+			ui.Text(c, "多").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+		})
 	})
 }
 
-// main is the sidebar and the page it opens.
-func (a *app) main(c *ui.Context, t *ui.Theme) {
-	// Sidebar.
-	ui.Column(c).Width(t.Space(44)).Fill().Background(t.Surface).
-		Padding(t.Space(4), t.Space(3)).Gap(t.Space(1)).Children(func() {
-		a.navItem(c, t, 0, "总览", icons.LayoutDashboard())
-		a.navItem(c, t, 1, "Sessions", icons.ListChecks())
-		a.navItem(c, t, 2, "设置", icons.Settings())
-	})
-
-	// Page.
-	switch a.page {
-	case 1:
-		a.sessionsPage(c, t)
-	case 2:
-		a.settingsPage(c, t)
-	default:
-		ui.Scroll(c).Grow(1).Children(func() {
-			a.dashboardPage(c, t)
-		})
+// modelLine is the per-model summary of the period, one muted line: the
+// model breakdown without a table of its own.
+func (a *app) modelLine(c *ui.Context, t *ui.Theme, sessions []core.Session) {
+	rows := core.ModelTotals(sessions)
+	if len(rows) == 0 {
+		ui.Text(c, "没有用量记录").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+		return
 	}
-}
-
-func (a *app) navItem(c *ui.Context, t *ui.Theme, page int, label string, svg *ui.SVG) {
-	open := a.page == page
-	item := ui.Row(c).FillWidth().Height(t.Space(9)).Radius(t.Space(2)).
-		PaddingX(t.Space(3)).Gap(t.Space(2.5)).AlignItems(ui.Center)
-	if open {
-		item.Background(t.Background)
-		item.Children(func() {
-			ui.Box(c).Width(2).FillHeight().Radius(1).Background(t.Accent)
-			ui.Icon(c, svg).Size(t.Space(4), t.Space(4)).TextColor(t.Text)
-			ui.Text(c, label).FontSize(myui.TextSize(t, myui.TextSm)).Bold()
-		})
-	} else {
-		item.Children(func() {
-			ui.Box(c).Width(2).FillHeight()
-			ui.Icon(c, svg).Size(t.Space(4), t.Space(4)).TextColor(t.TextMuted)
-			ui.Text(c, label).FontSize(myui.TextSize(t, myui.TextSm)).
-				TextColor(t.TextMuted)
-		})
-		if item.Hovered() {
-			item.Background(t.Background.Alpha(0.6))
-		}
-		if item.Clicked() {
-			a.page = page
-		}
+	max := 3
+	if len(rows) < max {
+		max = len(rows)
 	}
-}
-
-// filtered applies the Sessions filters.
-func (a *app) filtered() []core.Session {
-	out := a.session[:0:0]
-	for _, s := range a.session {
-		if a.fSource != "" && s.Source != a.fSource {
-			continue
+	parts := make([]string, 0, max+1)
+	for _, r := range rows[:max] {
+		s := fmt.Sprintf("%s %s", r.Model, fmtCost(r.Cost.Amount))
+		if r.Cost.Estimated {
+			s += "*"
 		}
-		if a.fProject != "" && s.Project != a.fProject {
-			continue
-		}
-		if a.fModel != "" && s.Model != a.fModel {
-			continue
-		}
-		if a.fQuery != "" && !strings.Contains(strings.ToLower(s.Title), strings.ToLower(a.fQuery)) {
-			continue
-		}
-		out = append(out, s)
+		parts = append(parts, s)
 	}
-	return out
-}
-
-// tableSignature identifies the filter set; when it changes the selection
-// of the table starts over.
-func (a *app) tableSignature() string {
-	return a.fSource + "|" + a.fProject + "|" + a.fModel + "|" + a.fQuery
-}
-
-// fmtTokens renders a token count compactly.
-func fmtTokens(n int64) string {
-	switch {
-	case n >= 1e9:
-		return fmt.Sprintf("%.2fB", float64(n)/1e9)
-	case n >= 1e6:
-		return fmt.Sprintf("%.2fM", float64(n)/1e6)
-	case n >= 1e3:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	if len(rows) > max {
+		parts = append(parts, fmt.Sprintf("…等 %d 个模型", len(rows)))
 	}
-	return fmt.Sprintf("%d", n)
-}
-
-// fmtCost renders a USD amount.
-func fmtCost(v float64) string {
-	if v == 0 {
-		return "$0.00"
-	}
-	return fmt.Sprintf("$%.2f", v)
+	ui.Text(c, strings.Join(parts, "  ·  ")).FontSize(myui.TextSize(t, myui.TextXs)).
+		TextColor(t.TextMuted).SingleLine()
 }

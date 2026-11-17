@@ -35,7 +35,7 @@ func (opencodeStub) DeleteSession(id string) error { return nil }
 // exercises the view without one.
 func testApp(t *testing.T, sessions []core.Session) *app {
 	t.Helper()
-	a := &app{trendDays: 30}
+	a := &app{}
 	a.prices = core.DefaultPrices()
 	a.reg = core.NewRegistry(codexStub{}, opencodeStub{})
 	a.session = sessions
@@ -59,52 +59,48 @@ func fakeSessions() []core.Session {
 	}
 }
 
-func TestDashboardRenders(t *testing.T) {
+func TestMainViewRenders(t *testing.T) {
 	a := testApp(t, fakeSessions())
-	tt := ui.NewTester(a.view, 1100, 720)
-	for _, want := range []string{"Token X", "今日 Tokens", "近 7 天金额", "每日金额趋势", "按模型细分"} {
+	tt := ui.NewTester(a.view, 640, 620)
+	for _, want := range []string{"今日金额", "3 个 session", "今天的会话", "昨天的会话"} {
 		if !tt.HasText(want) {
-			t.Errorf("dashboard missing text %q, texts %q", want, tt.Texts())
+			t.Errorf("main view missing text %q, texts %q", want, tt.Texts())
 		}
 	}
 }
 
-func TestSessionsPage(t *testing.T) {
+func TestPeriodSwitch(t *testing.T) {
 	a := testApp(t, fakeSessions())
-	a.page = 1
-	tt := ui.NewTester(a.view, 1100, 720)
-	if !tt.HasText("今天的会话") {
-		t.Errorf("sessions table missing row, texts %q", tt.Texts())
+	tt := ui.NewTester(a.view, 640, 620)
+	if err := tt.Click("近 7 天"); err != nil {
+		t.Fatalf("period click: %v", err)
 	}
-	if !tt.HasText("3 个 session") {
-		t.Errorf("row count missing, texts %q", tt.Texts())
+	if a.period != 1 {
+		t.Errorf("period %d after clicking 近 7 天", a.period)
+	}
+	if !tt.HasText("近 7 天金额") {
+		t.Errorf("hero label did not follow, texts %q", tt.Texts())
 	}
 }
 
-func TestSettingsPage(t *testing.T) {
+func TestFilterByQuery(t *testing.T) {
 	a := testApp(t, fakeSessions())
-	a.page = 2
-	tt := ui.NewTester(a.view, 1100, 720)
-	for _, want := range []string{"价格表", "恢复默认", "数据源"} {
-		if !tt.HasText(want) {
-			t.Errorf("settings missing text %q, texts %q", want, tt.Texts())
-		}
+	tt := ui.NewTester(a.view, 640, 620)
+	tt.Click("搜索…")
+	tt.Type("昨天")
+	if !tt.HasText("1 个 session") {
+		t.Errorf("filter did not narrow the table, texts %q", tt.Texts())
 	}
 }
 
-func TestNavigation(t *testing.T) {
+func TestDeleteFlowDisabledWithoutSelection(t *testing.T) {
 	a := testApp(t, fakeSessions())
-	tt := ui.NewTester(a.view, 1100, 720)
-	if err := tt.Click("Sessions"); err != nil {
-		t.Fatalf("nav click: %v", err)
+	tt := ui.NewTester(a.view, 640, 620)
+	if !tt.HasText("删除") {
+		t.Errorf("delete action missing, texts %q", tt.Texts())
 	}
-	if a.page != 1 {
-		t.Errorf("page %d after clicking Sessions", a.page)
-	}
-	if err := tt.Click("设置"); err != nil {
-		t.Fatalf("nav click: %v", err)
-	}
-	if a.page != 2 {
-		t.Errorf("page %d after clicking 设置", a.page)
+	// No selection: the confirm modal must not open.
+	if a.confirm {
+		t.Errorf("confirm opened without a selection")
 	}
 }

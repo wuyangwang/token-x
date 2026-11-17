@@ -10,8 +10,8 @@ import (
 // would.
 func TestView(t *testing.T) {
 	a := testApp(t, nil)
-	tt := ui.NewTester(a.view, 480, 360)
-	if !tt.HasText("Token X") {
+	tt := ui.NewTester(a.view, 640, 620)
+	if !tt.HasText("今日金额") {
 		t.Errorf("texts %q", tt.Texts())
 	}
 }
