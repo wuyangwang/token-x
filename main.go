@@ -23,6 +23,7 @@ import (
 	"github.com/wuyangwang/my-ui/icons"
 
 	"token-x/core"
+	_ "token-x/locales" // register zh-Hans so the UI and installer are Chinese
 	"token-x/providers/claude"
 	"token-x/providers/codex"
 	"token-x/providers/gemini"
