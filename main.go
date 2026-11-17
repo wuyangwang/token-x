@@ -108,6 +108,7 @@ func windowMain() {
 			StateKey:      "main",
 			Content:       ui.View(a.view),
 		})
+		setWindowBorderColor(a.win.NativeHandle(), a.dark)
 		a.reload()
 	})
 	if err := mygo.App.Run(); err != nil {
@@ -248,6 +249,7 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 					} else {
 						mygo.Theme.SetSource(mygo.ThemeLight)
 					}
+					setWindowBorderColor(a.win.NativeHandle(), a.dark)
 				}
 			}
 		})
