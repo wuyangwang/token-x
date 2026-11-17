@@ -50,13 +50,13 @@ func fakeSessions() []core.Session {
 	return []core.Session{
 		{ID: "s1", Title: "今天的会话", Source: "codex", Project: "E:/work/alpha",
 			Model: "gpt-6.1-sol", Created: now, Updated: now,
-			Tokens: core.TokenUsage{Input: 1000, Output: 500}},
+			Tokens: core.TokenUsage{Input: 1000, Output: 500}, Cost: core.CostValue{Amount: 5.0}},
 		{ID: "s2", Title: "昨天的会话", Source: "opencode", Project: "E:/work/beta",
 			Model: "glm-5.3-flash-free", Created: now.Add(-day), Updated: now.Add(-day),
-			Tokens: core.TokenUsage{Input: 2000, Output: 100}},
+			Tokens: core.TokenUsage{Input: 2000, Output: 100}, Cost: core.CostValue{Amount: 1.0}},
 		{ID: "s3", Title: "上周的会话", Source: "opencode", Project: "E:/work/alpha",
 			Model: "glm-5.3-flash-free", Created: now.Add(-8 * day), Updated: now.Add(-8 * day),
-			Tokens: core.TokenUsage{Input: 3000, Output: 200}},
+			Tokens: core.TokenUsage{Input: 3000, Output: 200}, Cost: core.CostValue{Amount: 3.0}},
 	}
 }
 
@@ -99,8 +99,14 @@ func TestSortByCostAndTime(t *testing.T) {
 	a.sort = ui.SortOrder{Column: "cost"}
 	a.rowsNow = a.filtered()
 	a.sortRows(a.rowsNow)
+	if a.rowsNow[0].ID != "s2" {
+		t.Fatalf("cost ascending: first %q, want s2 (cheapest)", a.rowsNow[0].ID)
+	}
+	a.sort = ui.SortOrder{Column: "cost", Descending: true}
+	a.rowsNow = a.filtered()
+	a.sortRows(a.rowsNow)
 	if a.rowsNow[0].ID != "s1" {
-		t.Fatalf("cost ascending: first %q, want the highest-cost session s1", a.rowsNow[0].ID)
+		t.Fatalf("cost descending: first %q, want s1 (most expensive)", a.rowsNow[0].ID)
 	}
 
 	a.sort = ui.SortOrder{Column: "time", Descending: true}
