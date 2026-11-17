@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -48,15 +49,17 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 
 	// The table.
 	rows := a.filtered()
+	a.sortRows(rows)
 	a.rowsNow = rows
 	a.rows.Key = func(row int) any { return rows[row].ID }
 	cols := []ui.TableColumn{
 		{Title: "会话", MinWidth: 150},
 		{Title: "模型", Width: 95},
-		{Title: "Tokens", Width: 68, Align: ui.End},
-		{Title: "金额", Width: 68, Align: ui.End},
-		{Title: "时间", Width: 104},
+		{Title: "Tokens", Width: 68, Align: ui.End, ID: "tokens", Sortable: true},
+		{Title: "金额", Width: 68, Align: ui.End, ID: "cost", Sortable: true},
+		{Title: "时间", Width: 104, ID: "time", Sortable: true},
 	}
+	a.rows.Sort = &a.sort
 	a.rows.Selection = &a.chosen
 	ui.Table(c, &a.rows, cols, len(rows), func(row, col int) {
 		s := rows[row]
@@ -66,11 +69,12 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 			ui.Text(c, s.Model).SingleLine().TruncateMiddle().Tooltip(s.Model)
 			return
 		}
-		cell := ui.Text(c, sessionCell(s, col)).SingleLine()
 		if col == 0 {
-			cell = cell.Tooltip(sessionCell(s, col))
+			title := sessionCell(s, col)
+			ui.Text(c, title).SingleLine().Tooltip(title)
+			return
 		}
-		cell
+		ui.Text(c, sessionCell(s, col)).SingleLine()
 	}).Grow(1)
 }
 
@@ -96,6 +100,32 @@ func (a *app) footer(c *ui.Context, t *ui.Theme) {
 			ui.Box(c).Grow(1)
 			a.confirmModal(c, t)
 		})
+	})
+}
+
+// sortRows orders rows by the table's current sort column. Unsorted rows
+// stay in the newest-first order the app loaded them in.
+func (a *app) sortRows(rows []core.Session) {
+	col, desc := a.sort.Column, a.sort.Descending
+	if col == "" {
+		return
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		var less bool
+		switch col {
+		case "cost":
+			less = rows[i].Cost.Amount < rows[j].Cost.Amount
+		case "tokens":
+			less = rows[i].Tokens.Total() < rows[j].Tokens.Total()
+		case "time":
+			less = rows[i].Updated.Before(rows[j].Updated)
+		default:
+			return false
+		}
+		if desc {
+			return !less
+		}
+		return less
 	})
 }
 

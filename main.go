@@ -60,6 +60,7 @@ type app struct {
 	// The sessions table. The selection holds session ids, so it follows
 	// rows across reloads and filter changes.
 	rows   ui.ListState
+	sort   ui.SortOrder
 	chosen ui.Selection[string]
 	// The sessions of the current frame, for cell building and actions.
 	rowsNow []core.Session

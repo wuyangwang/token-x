@@ -94,6 +94,31 @@ func TestFilterByQuery(t *testing.T) {
 	}
 }
 
+func TestSortByCostAndTime(t *testing.T) {
+	a := testApp(t, fakeSessions())
+	a.sort = ui.SortOrder{Column: "cost"}
+	a.rowsNow = a.filtered()
+	a.sortRows(a.rowsNow)
+	if a.rowsNow[0].ID != "s1" {
+		t.Fatalf("cost ascending: first %q, want the highest-cost session s1", a.rowsNow[0].ID)
+	}
+
+	a.sort = ui.SortOrder{Column: "time", Descending: true}
+	a.rowsNow = a.filtered()
+	a.sortRows(a.rowsNow)
+	if a.rowsNow[0].ID != "s1" || a.rowsNow[len(a.rowsNow)-1].ID != "s3" {
+		t.Errorf("time descending: %s", idsOf(a.rowsNow))
+	}
+}
+
+func idsOf(rows []core.Session) []string {
+	out := make([]string, len(rows))
+	for i, s := range rows {
+		out[i] = s.ID
+	}
+	return out
+}
+
 func TestThemeToggle(t *testing.T) {
 	a := testApp(t, fakeSessions())
 	tt := ui.NewTester(a.view, 640, 620)
