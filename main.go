@@ -104,12 +104,11 @@ func windowMain() {
 			Height:          620,
 			MinWidth:        560,
 			MinHeight:       480,
-			TitleBarStyle:   mygo.TitleBarHidden,
-			BackgroundColor: "light-dark(#ffffff, #09090b)", // my-ui 的浅/深背景, 避免边缘露出白色窗口底色
+			Frameless:       true, // no DWM border line: the view paints to the edges
+			BackgroundColor: "light-dark(#ffffff, #09090b)",
 			StateKey:        "main",
 			Content:         ui.View(a.view),
 		})
-		setWindowBorderColor(a.win.NativeHandle(), a.dark)
 		a.reload()
 	})
 	if err := mygo.App.Run(); err != nil {
@@ -196,17 +195,55 @@ func (a *app) view(c *ui.Context) {
 	}
 }
 
-// titleBar draws the window title inside the content, where it follows the
-// app's theme. The native Windows title bar is hidden: DWM kept it light even
-// after mygo.Theme switched to dark, so the frame is drawn here instead. The
-// strip reserves the room of the system window buttons and drags the window.
+// titleBar draws the window chrome inside the content, where it follows the
+// app's theme. The window is frameless: Windows draws a white border line
+// around a titled window that no DWM setting could recolor, so the view paints
+// to the edges and supplies its own title and controls instead.
 func (a *app) titleBar(c *ui.Context, t *ui.Theme) {
 	bar := c.TitleBar()
-	ui.Row(c).FillWidth().Height(max(bar.Height, 32)).
-		Padding(0, bar.Right+12, 0, bar.Left+12).
-		AlignItems(ui.Center).DragWindow().Background(t.Background).Children(func() {
+	drag := ui.Row(c).FillWidth().Height(max(bar.Height, 36)).
+		Padding(0, 0, 0, t.Space(4)).AlignItems(ui.Center).DragWindow()
+	if drag.WindowDoubleClicked() {
+		a.toggleMaximize()
+	}
+	drag.Children(func() {
 		ui.Text(c, "Token X").FontSize(myui.TextSize(t, myui.TextSm)).Bold()
+		ui.Box(c).Grow(1)
+
+		if a.win != nil {
+			maxIcon, maxHint := icons.Square(), "最大化"
+			if a.win.IsMaximized() {
+				maxIcon, maxHint = icons.Minimize2(), "还原"
+			}
+			a.winButton(c, t, "minimize", icons.Minus(), "最小化", func() { a.win.Minimize() })
+			a.winButton(c, t, "maximize", maxIcon, maxHint, a.toggleMaximize)
+			a.winButton(c, t, "close", icons.X(), "关闭", func() { a.win.Close() })
+		}
 	})
+}
+
+// winButton is one small window control: an icon in a hoverable box.
+func (a *app) winButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, hint string, clicked func()) {
+	b := ui.Box(c.Key(key)).Size(36, 36).Radius(4).
+		AlignItems(ui.Center).Justify(ui.Center).
+		Role(ui.RoleButton).OnClick(func() { clicked() })
+	if b.Hovered() {
+		b.Background(t.Surface)
+	}
+	b.Tooltip(hint)
+	b.Children(func() { ui.Icon(c, icon).Size(14, 14) })
+}
+
+// toggleMaximize switches between maximized and restored.
+func (a *app) toggleMaximize() {
+	if a.win == nil {
+		return
+	}
+	if a.win.IsMaximized() {
+		a.win.Unmaximize()
+	} else {
+		a.win.Maximize()
+	}
 }
 
 func (a *app) divider(c *ui.Context, t *ui.Theme) {
@@ -250,7 +287,6 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 					} else {
 						mygo.Theme.SetSource(mygo.ThemeLight)
 					}
-					setWindowBorderColor(a.win.NativeHandle(), a.dark)
 				}
 			}
 		})
