@@ -1,0 +1,6 @@
+{
+  "name": "token-x",
+  "identifier": "com.example.token-x",
+  "version": "0.1.0",
+  "out": "build"
+}
