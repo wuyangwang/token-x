@@ -7,7 +7,7 @@ tool github.com/egoist/mygo/cmd/mygo
 require (
 	github.com/egoist/mygo v0.9.2
 	github.com/klauspost/compress v1.18.6
-	github.com/wuyangwang/my-ui v0.0.0-20261117070814-48d335fb5833
+	github.com/wuyangwang/my-ui v0.2.0
 	modernc.org/sqlite v1.62.0
 )
 
