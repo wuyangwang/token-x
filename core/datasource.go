@@ -23,9 +23,10 @@ type Registry struct {
 	Sources []DataSource
 }
 
-// NewRegistry builds the default registry. Later sources append here.
-func NewRegistry(codex, opencode DataSource) *Registry {
-	return &Registry{Sources: []DataSource{codex, opencode}}
+// NewRegistry builds a registry from the given sources. Sources are shown
+// in the order passed.
+func NewRegistry(sources ...DataSource) *Registry {
+	return &Registry{Sources: sources}
 }
 
 // Get returns the source with the given name.

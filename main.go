@@ -23,9 +23,14 @@ import (
 	"github.com/wuyangwang/my-ui/icons"
 
 	"token-x/core"
+	"token-x/providers/claude"
 	"token-x/providers/codex"
+	"token-x/providers/gemini"
 	"token-x/providers/opencode"
 )
+
+// heatLevels is the 少→多 ramp, from faintest to full accent.
+var heatLevels = []float32{0.18, 0.38, 0.6, 1.0}
 
 // periods is the segmented control at the top: what the hero, the chart
 // and the model line show.
@@ -43,6 +48,9 @@ type app struct {
 	session []core.Session // all sessions, newest first
 
 	period int // index into periods
+
+	// appearance follows the system until the user flips the switch.
+	appearance myui.Appearance
 
 	// Filters. Empty strings mean "all".
 	fSource  string
@@ -86,7 +94,10 @@ func windowMain() {
 	a := &app{}
 	home, _ := os.UserHomeDir()
 	a.prices = core.LoadPrices(filepath.Join(home, ".token-x"))
-	a.reg = core.NewRegistry(codex.New("", a.prices), opencode.New(""))
+	a.reg = core.NewRegistry(
+		codex.New("", a.prices), opencode.New(""),
+		claude.New("", a.prices), gemini.New("", a.prices),
+	)
 
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
@@ -123,13 +134,39 @@ func (a *app) reload() {
 			a.loadErr = err
 			a.loading = false
 			a.chosen.Clear()
+			// If the filtered project/source no longer has any session
+			// (e.g. the last one was just deleted), fall back to "all".
+			if a.fProject != "" && !hasProject(sessions, a.fProject) {
+				a.fProject = ""
+			}
+			if a.fSource != "" && !hasSource(sessions, a.fSource) {
+				a.fSource = ""
+			}
 		})
 	}()
 }
 
+func hasProject(sessions []core.Session, project string) bool {
+	for _, s := range sessions {
+		if s.Project == project {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSource(sessions []core.Session, source string) bool {
+	for _, s := range sessions {
+		if s.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
 // view builds one frame.
 func (a *app) view(c *ui.Context) {
-	t := myui.Apply(c, myui.Options{})
+	t := myui.Apply(c, myui.Options{Appearance: a.appearance, Palette: myui.PaletteOrange})
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		a.header(c, t)
@@ -165,28 +202,37 @@ func (a *app) divider(c *ui.Context, t *ui.Theme) {
 // tools. The cost is the one accent of the window.
 func (a *app) header(c *ui.Context, t *ui.Theme) {
 	tokens, cost, count := a.periodTotals()
-	est := ""
-	if cost.Estimated {
-		est = "*"
-	}
 
 	ui.Column(c).FillWidth().PaddingY(t.Space(5)).PaddingX(t.Space(6)).Gap(t.Space(2)).Children(func() {
-		ui.Row(c).FillWidth().AlignItems(ui.End).Children(func() {
+		ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Gap(0).Children(func() {
 				ui.Text(c, periodLabel(a.period)).FontSize(myui.TextSize(t, myui.TextSm)).
 					TextColor(t.TextMuted)
-				ui.Text(c, fmtCost(cost.Amount)+est).
-					FontSize(myui.TextSize(t, myui.TextXl)).Bold()
+				ui.Text(c, fmtCost(cost.Amount)).
+					FontSize(myui.TextSize(t, myui.Text2Xl)).Bold()
 			})
 			ui.Box(c).Grow(1)
 			a.periodSwitch(c, t)
-			refresh := myui.NewButton(c.Key("reload"), "").Icon(icons.RefreshCw()).Ghost().Sm()
-			refresh.AlignSelf(ui.End)
+			refresh := myui.NewButton(c.Key("reload"), "").Icon(icons.RefreshCw()).Ghost().Sm().Label("刷新")
+			refresh.AlignSelf(ui.Center)
 			if a.loading {
 				refresh.Disabled(true)
 			}
 			if refresh.Clicked() {
 				a.reload()
+			}
+			icon, hint := icons.Moon(), "切换到深色"
+			if a.appearance == myui.AppearanceDark {
+				icon, hint = icons.Sun(), "切换到浅色"
+			}
+			appearance := myui.NewButton(c.Key("appearance"), "").Icon(icon).Ghost().Sm().Label(hint)
+			appearance.AlignSelf(ui.Center)
+			if appearance.Clicked() {
+				if a.appearance == myui.AppearanceDark {
+					a.appearance = myui.AppearanceLight
+				} else {
+					a.appearance = myui.AppearanceDark
+				}
 			}
 		})
 		ui.Text(c, fmt.Sprintf("%s tokens · %d 个 session", fmtTokens(tokens.Total()), count)).
@@ -230,26 +276,41 @@ func (a *app) periodTotals() (core.TokenUsage, core.CostValue, int) {
 	return tokens, cost, len(sessions)
 }
 
-// usage is the contribution-style heat grid of the period (one column per
-// week, one cell per day, depth = that day's cost) plus a one-line model
-// summary.
+// usage is the contribution-style heat grid (one column per week, one
+// cell per day, depth = that day's cost) plus a one-line model summary.
 func (a *app) usage(c *ui.Context, t *ui.Theme) {
-	sessions, days := a.periodSessions()
-	daily := core.DailyTotals(sessions, days, time.Now())
+	sessions, _ := a.periodSessions()
 
-	ui.Column(c).FillWidth().PaddingX(t.Space(6)).PaddingY(t.Space(2.5)).Children(func() {
-		a.heatmap(c, t, daily)
+	ui.Column(c).FillWidth().PaddingX(t.Space(6)).PaddingY(t.Space(2.5)).Gap(t.Space(2)).Children(func() {
+		a.heatmap(c, t)
+		a.legend(c, t)
 		a.modelLine(c, t, sessions)
 	})
 }
 
 // heatmap draws the daily cells GitHub's contribution graph does: weeks as
-// columns, Monday at the top, cell depth by cost against the period's
-// busiest day.
-func (a *app) heatmap(c *ui.Context, t *ui.Theme, daily []core.DailyUsage) {
+// columns, square cells, depth by cost against the busiest day. The
+// window's width picks the week count, so the cells span it edge to edge
+// and the range follows the window instead of being a fixed slice.
+func (a *app) heatmap(c *ui.Context, t *ui.Theme) {
 	const cell, gap = 12.0, 3.0
 
-	byDay := map[string]core.DailyUsage{}
+	// The legend sits below the grid, so the cells can use the whole row.
+	w, _ := c.Size()
+	weeks := int((w - 2*t.Space(6)) / (cell + gap))
+	if weeks < 8 {
+		weeks = 8
+	}
+	if weeks > 60 {
+		weeks = 60
+	}
+
+	// Anchor on today, which is always the bottom-right cell. Walking
+	// backwards by column and row gives each cell its date directly.
+	today := time.Now().Local().Truncate(24 * time.Hour)
+	todayRow := (int(today.Weekday()) + 6) % 7 // Monday = 0
+	daily := core.DailyTotals(a.session, weeks*7, time.Now())
+	byDay := make(map[string]core.DailyUsage, len(daily))
 	var peak float64
 	for _, d := range daily {
 		byDay[d.Day.Format("2006-01-02")] = d
@@ -257,79 +318,48 @@ func (a *app) heatmap(c *ui.Context, t *ui.Theme, daily []core.DailyUsage) {
 			peak = d.Cost.Amount
 		}
 	}
-	today := time.Now().Local().Truncate(24 * time.Hour)
-	if len(daily) == 0 {
+	if len(byDay) == 0 {
 		return
 	}
-
-	// Pad the first week so the first day lands on its weekday row.
-	offset := (int(daily[0].Day.Weekday()) + 6) % 7 // Monday = 0
-	weeks := (offset + len(daily) + 6) / 7
-	levelAlpha := []float32{0.18, 0.38, 0.6, 1.0}
-
-	ui.Row(c).FillWidth().Gap(gap).AlignItems(ui.Start).Children(func() {
-		// Weekday labels: 一, 三, 五 as GitHub marks Mon, Wed, Fri.
-		ui.Column(c).Gap(gap).Children(func() {
-			for i := 0; i < 7; i++ {
-				label := ""
-				switch i {
-				case 0:
-					label = "一"
-				case 2:
-					label = "三"
-				case 4:
-					label = "五"
-				}
-				ui.Box(c).Size(cell, cell).Children(func() {
-					if label != "" {
-						ui.Text(c, label).FontSize(myui.TextSize(t, myui.TextXs)).
-							TextColor(t.TextMuted)
-					}
-				})
-			}
-		})
-
+	ui.Row(c).FillWidth().Gap(gap).AlignItems(ui.End).Children(func() {
 		for w := 0; w < weeks; w++ {
-			week := w
+			col := w
 			ui.Column(c).Gap(gap).Children(func() {
 				for d := 0; d < 7; d++ {
-					idx := week*7 + d - offset
-					if idx < 0 || idx >= len(daily) {
-						ui.Box(c).Size(cell, cell).Radius(2).Background(t.Surface.Alpha(0.5))
-						continue
-					}
-					day := daily[idx]
-					date := day.Day.Format("2006-01-02")
-					if day.Day.After(today) {
-						ui.Box(c).Size(cell, cell).Radius(2).Background(t.Surface.Alpha(0.5))
-						continue
-					}
-					level := 0
-					if peak > 0 && day.Cost.Amount > 0 {
-						level = int(day.Cost.Amount/peak*4) + 1
-						if level > 4 {
-							level = 4
-						}
-					}
-					lv := level
+					daysAgo := (weeks-1-col)*7 + todayRow - d
+					date := today.AddDate(0, 0, -daysAgo)
+					key := date.Format("2006-01-02")
+					day, ok := byDay[key]
 					box := ui.Box(c).Size(cell, cell).Radius(2)
-					if lv == 0 {
-						box.Background(t.Surface)
-						box.Tooltip(date + " · 无用量")
-					} else {
-						box.Background(t.Accent.Alpha(levelAlpha[lv-1]))
-						box.Tooltip(fmt.Sprintf("%s · %s · %s", date,
+					if daysAgo < 0 || !ok {
+						box.Background(t.Surface.Alpha(0.5))
+					} else if peak > 0 && day.Cost.Amount > 0 {
+						lv := int(day.Cost.Amount/peak*4) + 1
+						if lv > 4 {
+							lv = 4
+						}
+						box.Background(t.Accent.Alpha(heatLevels[lv-1]))
+						box.Tooltip(fmt.Sprintf("%s · %s · %s", key,
 							fmtCost(day.Cost.Amount), fmtTokens(day.Tokens.Total())+" tokens"))
+					} else {
+						box.Background(t.Surface)
+						box.Tooltip(key + " · 无用量")
 					}
 				}
 			})
 		}
+	})
+}
 
-		// The depth legend: 少 → 多, real swatches of the same ramp.
+// legend is the 少 → 多 depth scale, placed under the grid and right
+// aligned.
+func (a *app) legend(c *ui.Context, t *ui.Theme) {
+	const cell, gap = 12.0, 3.0
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 		ui.Box(c).Grow(1)
 		ui.Row(c).Gap(gap).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "少").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
-			for _, al := range levelAlpha {
+			for _, al := range heatLevels {
 				ui.Box(c).Size(cell, cell).Radius(2).Background(t.Accent.Alpha(al))
 			}
 			ui.Text(c, "多").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
@@ -351,11 +381,7 @@ func (a *app) modelLine(c *ui.Context, t *ui.Theme, sessions []core.Session) {
 	}
 	parts := make([]string, 0, max+1)
 	for _, r := range rows[:max] {
-		s := fmt.Sprintf("%s %s", r.Model, fmtCost(r.Cost.Amount))
-		if r.Cost.Estimated {
-			s += "*"
-		}
-		parts = append(parts, s)
+		parts = append(parts, fmt.Sprintf("%s %s", r.Model, fmtCost(r.Cost.Amount)))
 	}
 	if len(rows) > max {
 		parts = append(parts, fmt.Sprintf("…等 %d 个模型", len(rows)))

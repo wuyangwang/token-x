@@ -28,7 +28,7 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 		for _, p := range core.Distinct(a.session, func(s core.Session) string { return s.Project }) {
 			popts = append(popts, myui.SelectOption{Label: shortPath(p), Value: p})
 		}
-		myui.NewSelect(c.Key("project"), &project, popts).Outline().Sm().Width(t.Space(44)).Label("项目")
+		myui.NewSelectClear(c.Key("project"), &project, popts, false).Outline().Sm().Width(t.Space(44)).Label("项目")
 		if project != a.fProject {
 			a.fProject = project
 			a.chosen.Clear()
@@ -39,7 +39,7 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 		for _, s := range a.reg.Sources {
 			sopts = append(sopts, myui.SelectOption{Label: s.Name(), Value: s.Name()})
 		}
-		myui.NewSelect(c.Key("source"), &source, sopts).Outline().Sm().Width(t.Space(36)).Label("来源")
+		myui.NewSelectClear(c.Key("source"), &source, sopts, false).Outline().Sm().Width(t.Space(36)).Label("来源")
 		if source != a.fSource {
 			a.fSource = source
 			a.chosen.Clear()
@@ -51,36 +51,47 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 	a.rowsNow = rows
 	a.rows.Key = func(row int) any { return rows[row].ID }
 	cols := []ui.TableColumn{
-		{Title: "会话", MinWidth: 220},
-		{Title: "模型", Width: 150},
-		{Title: "Tokens", Width: 90, Align: ui.End},
-		{Title: "金额", Width: 90, Align: ui.End},
-		{Title: "时间", Width: 96},
+		{Title: "会话", MinWidth: 160},
+		{Title: "模型", Width: 110},
+		{Title: "Tokens", Width: 75, Align: ui.End},
+		{Title: "金额", Width: 72, Align: ui.End},
+		{Title: "时间", Width: 88},
 	}
 	a.rows.Selection = &a.chosen
 	ui.Table(c, &a.rows, cols, len(rows), func(row, col int) {
-		ui.Text(c, sessionCell(rows[row], col)).SingleLine()
+		s := rows[row]
+		if col == 1 {
+			// The model is clipped to its column; the tooltip keeps the
+			// full name within reach.
+			ui.Text(c, s.Model).SingleLine().TruncateMiddle().Tooltip(s.Model)
+			return
+		}
+		ui.Text(c, sessionCell(s, col)).SingleLine()
 	}).Grow(1)
 }
 
 // footer is the bottom bar: the count on the left, the delete action on
-// the right when there is something to act on.
+// the right when there is something to act on. Tall enough that the
+// button never spills over the table above.
 func (a *app) footer(c *ui.Context, t *ui.Theme) {
-	ui.Row(c).FillWidth().Height(t.Space(10)).PaddingX(t.Space(6)).
-		Gap(t.Space(3)).AlignItems(ui.Center).Children(func() {
-		count := fmt.Sprintf("%d 个 session", len(a.rowsNow))
-		if a.chosen.Len() > 0 {
-			count += fmt.Sprintf(" · 已选 %d", a.chosen.Len())
-		}
-		ui.Text(c, count).FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
-		if a.loading {
-			ui.Text(c, "读取中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
-		}
-		if a.deleting {
-			ui.Text(c, "删除中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
-		}
-		ui.Box(c).Grow(1)
-		a.confirmModal(c, t)
+	ui.Column(c).FillWidth().Children(func() {
+		ui.Box(c).FillWidth().Height(1).Background(t.Border)
+		ui.Row(c).FillWidth().PaddingY(t.Space(3)).PaddingX(t.Space(6)).
+			Gap(t.Space(3)).AlignItems(ui.Center).Children(func() {
+			count := fmt.Sprintf("%d 个 session", len(a.rowsNow))
+			if a.chosen.Len() > 0 {
+				count += fmt.Sprintf(" · 已选 %d", a.chosen.Len())
+			}
+			ui.Text(c, count).FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+			if a.loading {
+				ui.Text(c, "读取中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+			}
+			if a.deleting {
+				ui.Text(c, "删除中…").FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.TextMuted)
+			}
+			ui.Box(c).Grow(1)
+			a.confirmModal(c, t)
+		})
 	})
 }
 
@@ -231,11 +242,7 @@ func sessionCell(s core.Session, col int) string {
 	case 2:
 		return fmtTokens(s.Tokens.Total())
 	case 3:
-		c := fmtCost(s.Cost.Amount)
-		if s.Cost.Estimated {
-			return c + "*"
-		}
-		return c
+		return fmtCost(s.Cost.Amount)
 	case 4:
 		return s.Updated.Local().Format("01-02 15:04")
 	}

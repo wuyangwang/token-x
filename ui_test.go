@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+	myui "github.com/wuyangwang/my-ui"
 
 	"token-x/core"
 )
@@ -90,6 +91,20 @@ func TestFilterByQuery(t *testing.T) {
 	tt.Type("昨天")
 	if !tt.HasText("1 个 session") {
 		t.Errorf("filter did not narrow the table, texts %q", tt.Texts())
+	}
+}
+
+func TestThemeToggle(t *testing.T) {
+	a := testApp(t, fakeSessions())
+	tt := ui.NewTester(a.view, 640, 620)
+	if err := tt.Click("切换到深色"); err != nil {
+		t.Fatalf("theme click: %v", err)
+	}
+	if a.appearance != myui.AppearanceDark {
+		t.Errorf("appearance %v after clicking the moon", a.appearance)
+	}
+	if !tt.HasText("切换到浅色") {
+		t.Errorf("the switch did not flip its hint, texts %q", tt.Texts())
 	}
 }
 
