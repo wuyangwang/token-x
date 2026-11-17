@@ -1,8 +1,8 @@
 # token-x 设计文档
 
-AI Agent Token 用量管理器 —— 查询、删除 Codex / OpenCode 的 session，查看当天 token 用量与耗费金额。
+AI Agent Token 用量管理器 —— 查询、删除本地 AI 编程 agent（Codex / OpenCode / Claude Code / Gemini CLI）的 session，查看当天 token 用量与耗费金额。
 
-> 本文档基于对本机实际数据的探查（Codex CLI 0.169.0、OpenCode v2.3.0），所有数据格式结论均有实证。
+> Codex / OpenCode 的数据格式结论基于对本机实际数据的探查（Codex CLI 0.169.0、OpenCode v2.3.0）；Claude Code / Gemini CLI 的格式参考官方文档与开源解析器（ccusage），并有合成数据单测覆盖。
 
 ---
 
@@ -12,9 +12,9 @@ AI Agent Token 用量管理器 —— 查询、删除 Codex / OpenCode 的 sessi
 |---|---|---|
 | 语言 | Go 1.27+（纯 Go，无 cgo） | |
 | UI | mygo `package ui`（GPU 自绘原生 UI，无 webview） | `E:\work\test-demo\mygo` |
-| 组件库 | my-ui（shadcn 风格设计系统，zinc 默认主题，跟随系统明暗色） | `github.com/wuyangwang/my-ui` |
+| 组件库 | my-ui（shadcn 风格设计系统，橙色强调色，明暗可切换） | `github.com/wuyangwang/my-ui` |
 | 数据读取 | 实时读取原始数据（v1 不建索引库） | |
-| 数据源架构 | `DataSource` 插件接口，v1 实现 codex + opencode 两个 | |
+| 数据源架构 | `DataSource` 插件接口，实现 codex / opencode / claude / gemini | |
 | 界面语言 | 中文（zh-Hans） | |
 | 金额币种 | USD（模型计价口径，不做汇率换算） | |
 | 打包 | `go tool mygo build` → NSIS 安装器（`%LOCALAPPDATA%\Programs`，免管理员权限） | |
@@ -134,6 +134,25 @@ token 分类：`input_tokens`、`cached_input_tokens`（缓存读，计费折扣
 
 ---
 
+## 4.5 数据源：Claude Code / Gemini CLI
+
+**Claude Code**（`providers/claude/`）
+
+- 会话文件：`CLAUDE_CONFIG_DIR/projects/<project>/<uuid>.jsonl`（默认 `~/.claude/projects`）；子 agent 在同目录下。
+- 每条 assistant 行的 `message.usage = {input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens}`；**同一个 `message.id` 会出现多行且 usage 相同，必须按 message id 去重取最后一条**，否则约 5 倍高估。
+- 标题取 `type:"summary"` / `type:"custom-title"` 行；`cwd` 取顶层字段；model 取 `message.model`；updated 取最大 `timestamp`。
+- 金额：优先用行内 `costUSD`；没有则按价格表估算。删除 = 删 `.jsonl` + 同名子目录 + 清 `history.jsonl` 对应行。
+
+**Gemini CLI**（`providers/gemini/`）
+
+- 会话文件：`GEMINI_DATA_DIR/tmp/<projectHash>/chats/session-*.json`（默认 `~/.gemini/tmp`），一个文件是一个完整 JSON 对象。
+- token 在 `messages[].tokens = {input, output, cached, thoughts, tool}`；`thoughts` 并入 output，标题取首条 user 消息文本；updated 直接取 `lastUpdated`。
+- 无 cost 字段，按价格表估算。删除 = 删对应 session 文件。
+
+本机未安装这两个 agent，注册表会在 `Available()` 失败时自动跳过；正确性由合成数据单测保证。
+
+---
+
 ## 5. 金额计算
 
 | 数据源 | cost 来源 |
@@ -153,10 +172,10 @@ token 分类：`input_tokens`、`cached_input_tokens`（缓存读，计费折扣
 }
 ```
 
-- 单价单位：USD / 百万 token。默认值为 OpenAI 官方价的占位，**用户可在设置页逐模型修改**（例如填中转站 `ccswitch` 的实际单价，金额即变为真实开销）。
+- 单价单位：USD / 百万 token。默认值为 OpenAI 官方价的占位，用户可直接编辑 `~/.token-x/prices.json` 修改（无需设置页，改完点刷新）。
 - 金额 = `input × 单价 + cachedInput × 折扣价 + cacheWrite × 单价 + output × 单价`（reasoning 已含在 output 内）。
-- 未知模型用 `fallback` 价，界面标注"估算"。
-- codex 走中转站，官方价≠真实账单：设置页显著提示这一事实。
+- 未知模型用 `fallback` 价。UI 不再显示"估算"标记；价格表估算与 agent 自带 cost 在表格里一视同仁。
+- codex / gemini 走价格表估算；claude 优先用 transcript 中的 `costUSD`；opencode 本机 cost 为 0。
 
 ---
 
