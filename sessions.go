@@ -7,7 +7,10 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	myui "github.com/wuyangwang/my-ui"
+	"github.com/wuyangwang/my-ui/controls"
+	"github.com/wuyangwang/my-ui/forms"
 	"github.com/wuyangwang/my-ui/icons"
+	"github.com/wuyangwang/my-ui/overlays"
 
 	"token-x/core"
 )
@@ -18,29 +21,29 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 	// Filters, one compact row.
 	ui.Row(c).FillWidth().PaddingX(t.Space(6)).PaddingY(t.Space(3)).
 		Gap(t.Space(2.5)).AlignItems(ui.Center).Children(func() {
-		myui.NewInput(c.Key("query"), &a.fQuery).Outline().Sm().
+		forms.NewInput(c.Key("query"), &a.fQuery).Outline().Sm().
 			Width(t.Space(44)).PrefixIcon(icons.Search()).
 			Placeholder("搜索…").Label("搜索")
 
 		ui.Box(c).Grow(1)
 
 		project := a.fProject
-		popts := []myui.SelectOption{{Label: "全部项目", Value: ""}}
+		popts := []forms.SelectOption{{Label: "全部项目", Value: ""}}
 		for _, p := range core.Distinct(a.session, func(s core.Session) string { return s.Project }) {
-			popts = append(popts, myui.SelectOption{Label: shortPath(p), Value: p})
+			popts = append(popts, forms.SelectOption{Label: shortPath(p), Value: p})
 		}
-		myui.NewSelectClear(c.Key("project"), &project, popts, false).Outline().Sm().Width(t.Space(44)).Label("项目")
+		forms.NewSelectClear(c.Key("project"), &project, popts, false).Outline().Sm().Width(t.Space(44)).Label("项目")
 		if project != a.fProject {
 			a.fProject = project
 			a.chosen.Clear()
 		}
 
 		source := a.fSource
-		sopts := []myui.SelectOption{{Label: "全部来源", Value: ""}}
+		sopts := []forms.SelectOption{{Label: "全部来源", Value: ""}}
 		for _, s := range a.reg.Sources {
-			sopts = append(sopts, myui.SelectOption{Label: s.Name(), Value: s.Name()})
+			sopts = append(sopts, forms.SelectOption{Label: s.Name(), Value: s.Name()})
 		}
-		myui.NewSelectClear(c.Key("source"), &source, sopts, false).Outline().Sm().Width(t.Space(36)).Label("来源")
+		forms.NewSelectClear(c.Key("source"), &source, sopts, false).Outline().Sm().Width(t.Space(36)).Label("来源")
 		if source != a.fSource {
 			a.fSource = source
 			a.chosen.Clear()
@@ -153,8 +156,8 @@ func (a *app) filtered() []core.Session {
 // confirmModal is the delete-confirmation dialog, opened from the footer
 // delete button.
 func (a *app) confirmModal(c *ui.Context, t *ui.Theme) {
-	myui.NewModal(c, &a.confirm, func() ui.Element {
-		del := myui.NewButton(c.Key("delete"), "删除").
+	overlays.NewModal(c, &a.confirm, func() ui.Element {
+		del := controls.NewButton(c.Key("delete"), "删除").
 			Icon(icons.Trash2()).Destructive().Sm()
 		del.Disabled(a.chosen.Len() == 0 || a.deleting)
 		return del.Element
@@ -185,9 +188,9 @@ func (a *app) confirmModal(c *ui.Context, t *ui.Theme) {
 
 			ui.Row(c).FillWidth().Gap(t.Space(2)).AlignItems(ui.Center).Children(func() {
 				ui.Box(c).Grow(1)
-				myui.NewButton(c.Key("cancel"), "取消").Ghost().
+				controls.NewButton(c.Key("cancel"), "取消").Ghost().
 					OnClick(func() { a.confirm = false })
-				destructive := myui.NewButton(c.Key("confirm delete"), "永久删除").Destructive()
+				destructive := controls.NewButton(c.Key("confirm delete"), "永久删除").Destructive()
 				destructive.Disabled(a.deleting)
 				destructive.OnClick(func() { a.deleteChosen(chosen) })
 			})

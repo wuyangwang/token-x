@@ -20,7 +20,11 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	myui "github.com/wuyangwang/my-ui"
+	"github.com/wuyangwang/my-ui/controls"
+	"github.com/wuyangwang/my-ui/display"
 	"github.com/wuyangwang/my-ui/icons"
+	"github.com/wuyangwang/my-ui/overlays"
+	mywindow "github.com/wuyangwang/my-ui/window"
 
 	"token-x/core"
 	_ "token-x/locales" // register zh-Hans so the UI and installer are Chinese
@@ -47,10 +51,11 @@ type app struct {
 
 	period int // index into periods
 
-	// dark mirrors mygo.Theme only for the toggle's icon. The content
-	// follows mygo.Theme through myui.AppearanceSystem, so switching it
-	// changes the title bar and the content together.
-	dark bool
+	// The appearance choice. followSystem is true until the user switches;
+	// dark then mirrors the effective theme for the toggle's icon, while
+	// my-ui's window shell drives the content, the title bar and the frame.
+	followSystem bool
+	dark         bool
 
 	// Filters. Empty strings mean "all".
 	fSource  string
@@ -98,24 +103,31 @@ func windowMain() {
 	a.prices = core.LoadPrices(a.themeDir)
 	a.reg = newRegistry(a.prices)
 
-	// SetSource before Run so the first run inherits the desktop's
-	// appearance and later runs start in the appearance the user chose.
-	mygo.Theme.SetSource(loadTheme(a.themeDir))
+	// No saved choice means "follow the system"; the first run starts in
+	// the desktop's appearance and later runs in the one the user chose.
+	src := loadTheme(a.themeDir)
+	a.followSystem = src == mygo.ThemeSystem
+	a.dark = src == mygo.ThemeDark
+
 	mygo.App.WhenReady(func() {
-		a.win = mygo.NewWindow(mygo.WindowOptions{
-			Title:           "Token X",
-			Width:           640,
-			Height:          620,
-			MinWidth:        560,
-			MinHeight:       480,
-			Frameless:       true, // no DWM border line: the view paints to the edges
-			BackgroundColor: "light-dark(#ffffff, #09090b)",
-			StateKey:        "main",
-			Content:         ui.View(a.view),
+		// my-ui's window shell owns the frameless window, the themed title
+		// bar (Windows buttons or Mac traffic lights, by platform), the
+		// window background and the native frame's appearance.
+		a.win = mywindow.New(mywindow.Options{
+			Title:     "Token X",
+			Name:      "Token X",
+			Width:     640,
+			Height:    620,
+			MinWidth:  560,
+			MinHeight: 480,
+			StateKey:  "main",
+			Logo: func(c *ui.Context) {
+				ui.Image(c, appIcon).Size(18, 18).Radius(4)
+			},
+			Theme: a.appearance,
+			View:  a.view,
 		})
 		a.syncAppearance()
-		// Keep the icon in step when the appearance changes, whether from
-		// the toggle or from the desktop.
 		mygo.Theme.OnUpdated(a.syncAppearance)
 		a.reload()
 	})
@@ -125,6 +137,20 @@ func windowMain() {
 	}
 }
 
+// appearance supplies my-ui's window shell with the theme options for every
+// frame: the bar, the content and the native frame all take their colors
+// from here, so a switch changes them together.
+func (a *app) appearance() myui.Options {
+	appearance := myui.AppearanceSystem
+	if !a.followSystem {
+		appearance = myui.AppearanceLight
+		if a.dark {
+			appearance = myui.AppearanceDark
+		}
+	}
+	return myui.Options{Appearance: appearance, Palette: myui.PaletteOrange}
+}
+
 // syncAppearance mirrors the effective theme for the toggle's icon. Called
 // at startup and whenever the appearance changes, on MyGo's main thread.
 func (a *app) syncAppearance() {
@@ -132,15 +158,13 @@ func (a *app) syncAppearance() {
 }
 
 // toggleAppearance switches light/dark and remembers the choice, so the
-// next run starts in it. MyGo's update repaints content and window.
+// next run starts in it. The window shell applies it on the next frame.
 func (a *app) toggleAppearance() {
+	a.followSystem = false
 	a.dark = !a.dark
 	src := mygo.ThemeDark
 	if !a.dark {
 		src = mygo.ThemeLight
-	}
-	if a.win != nil {
-		mygo.Theme.SetSource(src)
 	}
 	if a.themeDir != "" {
 		_ = saveTheme(a.themeDir, src)
@@ -194,24 +218,24 @@ func hasSource(sessions []core.Session, source string) bool {
 	return false
 }
 
-// view builds one frame.
+// view builds one frame. my-ui's window shell has already applied the
+// theme, so the frame's own theme and colors are ready to use here.
 func (a *app) view(c *ui.Context) {
-	t := myui.Apply(c, myui.Options{Appearance: myui.AppearanceSystem, Palette: myui.PaletteOrange})
+	t := c.Theme()
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
-		a.titleBar(c, t)
 		a.header(c, t)
 		a.usage(c, t)
 		a.divider(c, t)
 		a.sessionsSection(c, t)
 		a.footer(c, t)
 	})
-	myui.NewToastViewport(c)
+	overlays.NewToastViewport(c)
 
 	// One toast per pending notification.
 	if a.toast.Title != "" && !a.toast.shown {
 		a.toast.shown = true
-		toast := myui.NewToast(c.Key("app toast"), a.toast.Title).
+		toast := overlays.NewToast(c.Key("app toast"), a.toast.Title).
 			Description(a.toast.Desc).Timeout(6 * time.Second)
 		if a.toast.Error {
 			toast.Destructive()
@@ -222,60 +246,6 @@ func (a *app) view(c *ui.Context) {
 	}
 	if a.toast.shown && a.toast.Title != "" {
 		a.toast.Title, a.toast.Desc = "", "" // shown; clear on this frame
-	}
-}
-
-// titleBar draws the window chrome inside the content, where it follows the
-// app's theme. The window is frameless: Windows draws a white border line
-// around a titled window that no DWM setting could recolor, so the view paints
-// to the edges and supplies its own title and controls instead.
-func (a *app) titleBar(c *ui.Context, t *ui.Theme) {
-	bar := c.TitleBar()
-	drag := ui.Row(c).FillWidth().Height(max(bar.Height, 36)).
-		Padding(0, t.Space(4), 0, t.Space(4)).Gap(t.Space(2)).AlignItems(ui.Center).DragWindow()
-	if drag.WindowDoubleClicked() {
-		a.toggleMaximize()
-	}
-	drag.Children(func() {
-		if appIcon != nil {
-			ui.Image(c, appIcon).Size(18, 18).Radius(4)
-		}
-		ui.Text(c, "Token X").FontSize(myui.TextSize(t, myui.TextSm)).Bold()
-		ui.Box(c).Grow(1)
-
-		if a.win != nil {
-			maxIcon, maxHint := icons.Square(), "最大化"
-			if a.win.IsMaximized() {
-				maxIcon, maxHint = icons.Minimize2(), "还原"
-			}
-			a.winButton(c, t, "minimize", icons.Minus(), "最小化", func() { a.win.Minimize() })
-			a.winButton(c, t, "maximize", maxIcon, maxHint, a.toggleMaximize)
-			a.winButton(c, t, "close", icons.X(), "关闭", func() { a.win.Close() })
-		}
-	})
-}
-
-// winButton is one small window control: an icon in a hoverable box.
-func (a *app) winButton(c *ui.Context, t *ui.Theme, key string, icon *ui.SVG, hint string, clicked func()) {
-	b := ui.Box(c.Key(key)).Size(36, 36).Radius(4).
-		AlignItems(ui.Center).Justify(ui.Center).
-		Role(ui.RoleButton).OnClick(func() { clicked() })
-	if b.Hovered() {
-		b.Background(t.Surface)
-	}
-	b.Tooltip(hint)
-	b.Children(func() { ui.Icon(c, icon).Size(14, 14) })
-}
-
-// toggleMaximize switches between maximized and restored.
-func (a *app) toggleMaximize() {
-	if a.win == nil {
-		return
-	}
-	if a.win.IsMaximized() {
-		a.win.Unmaximize()
-	} else {
-		a.win.Maximize()
 	}
 }
 
@@ -298,7 +268,7 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 			})
 			ui.Box(c).Grow(1)
 			a.periodSwitch(c, t)
-			refresh := myui.NewButton(c.Key("reload"), "").Icon(icons.RefreshCw()).Ghost().Sm().Label("刷新")
+			refresh := controls.NewButton(c.Key("reload"), "").Icon(icons.RefreshCw()).Ghost().Sm().Label("刷新")
 			refresh.AlignSelf(ui.Center)
 			if a.loading {
 				refresh.Disabled(true)
@@ -310,7 +280,7 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 			if a.dark {
 				icon, hint = icons.Sun(), "切换到浅色"
 			}
-			appearance := myui.NewButton(c.Key("appearance"), "").Icon(icon).Ghost().Sm().Label(hint)
+			appearance := controls.NewButton(c.Key("appearance"), "").Icon(icon).Ghost().Sm().Label(hint)
 			appearance.AlignSelf(ui.Center)
 			if appearance.Clicked() {
 				a.toggleAppearance()
@@ -334,7 +304,7 @@ func periodLabel(period int) string {
 
 // periodSwitch is the segmented 今日 / 近 7 天 / 近 30 天 control.
 func (a *app) periodSwitch(c *ui.Context, t *ui.Theme) {
-	myui.NewTabs(c, &a.period, myui.Tab{Label: periods[0]}, myui.Tab{Label: periods[1]}, myui.Tab{Label: periods[2]})
+	display.NewTabs(c, &a.period, display.Tab{Label: periods[0]}, display.Tab{Label: periods[1]}, display.Tab{Label: periods[2]})
 }
 
 // periodSessions returns the sessions whose last activity falls in the

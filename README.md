@@ -27,7 +27,9 @@ An agent whose data directory is missing is simply skipped.
   tokens, cost or time. Model names have tooltips when truncated.
 - Permanent deletion of one or many sessions, with a confirmation dialog.
   This cannot be undone.
-- Light/dark theme with an orange accent.
+- Light/dark theme with an orange accent: follows the system until you
+  switch, then remembers your choice across runs. The custom title bar uses
+  Windows buttons on Windows and traffic lights on macOS.
 - Prices are read from `~/.token-x/prices.json`; there is no settings UI.
   WorkBuddy models (such as `hy3` or `glm-5.3`) use the fallback price until
   you add them to that file.
@@ -44,11 +46,16 @@ go test ./...
 # Development build
 go tool mygo dev
 
-# Production build, including the Windows NSIS installer
+# Production build (Windows NSIS installer)
 go tool mygo build
+
+# macOS universal app (.app and .dmg; run on a Mac to produce the dmg)
+go tool mygo build -platform darwin/universal -sign -
 ```
 
-The packaged app lands in `build/windows-amd64/`.
+The packaged app lands in `build/windows-amd64/` or `build/darwin-universal/`.
+On macOS, open the `.dmg` and drag Token X to Applications; the `.app` is
+ad-hoc signed unless a Developer ID is supplied with `-sign`.
 
 ## Data and privacy
 

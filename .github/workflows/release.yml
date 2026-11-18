@@ -1,4 +1,4 @@
-name: Release (Windows)
+name: Release
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,3 +40,39 @@ jobs:
           files: |
             build/windows-amd64/token-x-setup-*.exe
             build/windows-amd64/token-x.exe
+
+  macos:
+    needs: windows
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build app and disk image
+        # Cross-compiles both arches into one universal app. Without a
+        # Developer ID the bundle is ad-hoc signed; it runs locally, and
+        # a Developer ID can be supplied later with -sign / notarization.
+        run: go tool mygo build -platform darwin/universal -sign -
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          v=$(python3 -c "import json; print(json.load(open('mygo.json'))['version'])")
+          echo "value=$v" >> $GITHUB_OUTPUT
+
+      - name: Add macOS assets to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: token-x ${{ steps.version.outputs.value }}
+          files: |
+            build/darwin-universal/token-x.app
+            build/darwin-universal/token-x-*.dmg
