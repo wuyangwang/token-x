@@ -36,9 +36,10 @@ var periodDays = []int{1, 7, 30}
 
 // app is the state the window shows.
 type app struct {
-	win    *mygo.Window
-	reg    *core.Registry
-	prices *core.PriceTable
+	win      *mygo.Window
+	reg      *core.Registry
+	prices   *core.PriceTable
+	themeDir string // ~/.token-x: prices.json and the theme preference
 
 	loading bool
 	loadErr error
@@ -93,11 +94,14 @@ func main() {
 func windowMain() {
 	a := &app{}
 	home, _ := os.UserHomeDir()
-	a.prices = core.LoadPrices(filepath.Join(home, ".token-x"))
+	a.themeDir = filepath.Join(home, ".token-x")
+	a.prices = core.LoadPrices(a.themeDir)
 	a.reg = newRegistry(a.prices)
 
+	// SetSource before Run so the first run inherits the desktop's
+	// appearance and later runs start in the appearance the user chose.
+	mygo.Theme.SetSource(loadTheme(a.themeDir))
 	mygo.App.WhenReady(func() {
-		a.dark = mygo.Theme.IsDark()
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:           "Token X",
 			Width:           640,
@@ -109,11 +113,37 @@ func windowMain() {
 			StateKey:        "main",
 			Content:         ui.View(a.view),
 		})
+		a.syncAppearance()
+		// Keep the icon in step when the appearance changes, whether from
+		// the toggle or from the desktop.
+		mygo.Theme.OnUpdated(a.syncAppearance)
 		a.reload()
 	})
 	if err := mygo.App.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+// syncAppearance mirrors the effective theme for the toggle's icon. Called
+// at startup and whenever the appearance changes, on MyGo's main thread.
+func (a *app) syncAppearance() {
+	a.dark = mygo.Theme.IsDark()
+}
+
+// toggleAppearance switches light/dark and remembers the choice, so the
+// next run starts in it. MyGo's update repaints content and window.
+func (a *app) toggleAppearance() {
+	a.dark = !a.dark
+	src := mygo.ThemeDark
+	if !a.dark {
+		src = mygo.ThemeLight
+	}
+	if a.win != nil {
+		mygo.Theme.SetSource(src)
+	}
+	if a.themeDir != "" {
+		_ = saveTheme(a.themeDir, src)
 	}
 }
 
@@ -283,14 +313,7 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 			appearance := myui.NewButton(c.Key("appearance"), "").Icon(icon).Ghost().Sm().Label(hint)
 			appearance.AlignSelf(ui.Center)
 			if appearance.Clicked() {
-				a.dark = !a.dark
-				if a.win != nil {
-					if a.dark {
-						mygo.Theme.SetSource(mygo.ThemeDark)
-					} else {
-						mygo.Theme.SetSource(mygo.ThemeLight)
-					}
-				}
+				a.toggleAppearance()
 			}
 		})
 		ui.Text(c, fmt.Sprintf("%s tokens · %d 个 session", fmtTokens(tokens.Total()), count)).

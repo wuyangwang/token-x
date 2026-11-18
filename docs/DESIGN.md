@@ -181,7 +181,7 @@ token 分类：`input_tokens`、`cached_input_tokens`（缓存读，计费折扣
 
 ## 6. UI 设计（my-ui 组件）
 
-单列窄窗口（640×620，最小 560×480），没有侧栏也没有设置页——仿 ccusage / ccseva 一类用量工具的做法。主题为橙色强调色（my-ui `PaletteOrange`），右上角月亮/太阳按钮切换明暗。价格表不在界面里，只从 `~/.token-x/prices.json` 读取；金额后的 `*` 表示按价格表估算。
+单列窄窗口（640×620，最小 560×480），没有侧栏也没有设置页——仿 ccusage / ccseva 一类用量工具的做法。主题为橙色强调色（my-ui `PaletteOrange`），右上角月亮/太阳按钮切换明暗：首次启动跟随系统，切换后写入 `~/.token-x/theme`，下次启动沿用该选择。价格表不在界面里，只从 `~/.token-x/prices.json` 读取；金额后的 `*` 表示按价格表估算。
 
 ### 6.1 顶部
 
