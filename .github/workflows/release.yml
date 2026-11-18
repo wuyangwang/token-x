@@ -55,11 +55,12 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Build app and disk image
-        # Cross-compiles both arches into one universal app. Without a
-        # Developer ID the bundle is ad-hoc signed; it runs locally, and
-        # a Developer ID can be supplied later with -sign / notarization.
-        run: go tool mygo build -platform darwin/universal -sign -
+      - name: Build app and disk images
+        # One app per architecture: arm64 for M series, amd64 for Intel.
+        # Without a Developer ID the bundles are ad-hoc signed; they run
+        # locally, and a Developer ID can be supplied later with -sign /
+        # notarization.
+        run: go tool mygo build -platform darwin/arm64,darwin/amd64 -sign -
 
       - name: Read version
         id: version
@@ -74,5 +75,7 @@ jobs:
           tag_name: v${{ steps.version.outputs.value }}
           name: token-x ${{ steps.version.outputs.value }}
           files: |
-            build/darwin-universal/token-x.app
-            build/darwin-universal/token-x-*.dmg
+            build/darwin-arm64/token-x.app
+            build/darwin-arm64/token-x-*.dmg
+            build/darwin-amd64/token-x.app
+            build/darwin-amd64/token-x-*.dmg

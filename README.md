@@ -49,11 +49,13 @@ go tool mygo dev
 # Production build (Windows NSIS installer)
 go tool mygo build
 
-# macOS universal app (.app and .dmg; run on a Mac to produce the dmg)
-go tool mygo build -platform darwin/universal -sign -
+# macOS apps (.app and .dmg for both M series / arm64 and Intel / amd64;
+# run on a Mac to produce the dmg)
+go tool mygo build -platform darwin/arm64,darwin/amd64 -sign -
 ```
 
-The packaged app lands in `build/windows-amd64/` or `build/darwin-universal/`.
+The packaged app lands in `build/windows-amd64/`, `build/darwin-arm64/` or
+`build/darwin-amd64/`.
 On macOS, open the `.dmg` and drag Token X to Applications; the `.app` is
 ad-hoc signed unless a Developer ID is supplied with `-sign`.
 
