@@ -15,6 +15,7 @@ account, and no network access.
 | OpenCode | local SQLite store (read-only) | recorded, if present |
 | Claude Code | session transcripts under `~/.claude/projects` | `costUSD` in the transcript, else estimated |
 | Gemini CLI | session files under `~/.gemini/tmp` | estimated from `prices.json` |
+| WorkBuddy | session transcripts under `~/.workbuddy/projects` | estimated from `prices.json` |
 
 An agent whose data directory is missing is simply skipped.
 
@@ -28,6 +29,8 @@ An agent whose data directory is missing is simply skipped.
   This cannot be undone.
 - Light/dark theme with an orange accent.
 - Prices are read from `~/.token-x/prices.json`; there is no settings UI.
+  WorkBuddy models (such as `hy3` or `glm-5.3`) use the fallback price until
+  you add them to that file.
 - Chinese UI (the language of the installer and the app's own strings).
 
 ## Build

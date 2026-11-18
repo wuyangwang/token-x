@@ -40,7 +40,7 @@ type CostValue struct {
 type Session struct {
 	ID     string
 	Title  string
-	Source string // "codex" | "opencode"
+	Source string // e.g. "codex", "opencode", "workbuddy"
 	// Project is the working directory the session ran in.
 	Project string
 	Model   string

@@ -56,7 +56,7 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 	// wider window widens the columns instead of piling everything on the
 	// title. MinWidth keeps each readable at the smallest window.
 	cols := []ui.TableColumn{
-		{Title: "会话", MinWidth: 150},
+		{Title: "会话", MinWidth: 220},
 		{Title: "模型", MinWidth: 95},
 		{Title: "Tokens", MinWidth: 64, Align: ui.End, ID: "tokens", Sortable: true},
 		{Title: "金额", MinWidth: 64, Align: ui.End, ID: "cost", Sortable: true},
@@ -262,6 +262,8 @@ func sourceDot(c *ui.Context, t *ui.Theme, source string) ui.Color {
 		return t.Accent
 	case "opencode":
 		return t.Success
+	case "workbuddy":
+		return t.Warning
 	}
 	return t.TextMuted
 }
