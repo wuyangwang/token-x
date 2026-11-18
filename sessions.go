@@ -52,12 +52,15 @@ func (a *app) sessionsSection(c *ui.Context, t *ui.Theme) {
 	a.sortRows(rows)
 	a.rowsNow = rows
 	a.rows.Key = func(row int) any { return rows[row].ID }
+	// Every column flexes: the room beyond the content is shared, so a
+	// wider window widens the columns instead of piling everything on the
+	// title. MinWidth keeps each readable at the smallest window.
 	cols := []ui.TableColumn{
 		{Title: "会话", MinWidth: 150},
-		{Title: "模型", Width: 95},
-		{Title: "Tokens", Width: 68, Align: ui.End, ID: "tokens", Sortable: true},
-		{Title: "金额", Width: 68, Align: ui.End, ID: "cost", Sortable: true},
-		{Title: "时间", Width: 104, ID: "time", Sortable: true},
+		{Title: "模型", MinWidth: 95},
+		{Title: "Tokens", MinWidth: 64, Align: ui.End, ID: "tokens", Sortable: true},
+		{Title: "金额", MinWidth: 64, Align: ui.End, ID: "cost", Sortable: true},
+		{Title: "时间", MinWidth: 96, ID: "time", Sortable: true},
 	}
 	a.rows.Sort = &a.sort
 	a.rows.Selection = &a.chosen
