@@ -63,15 +63,15 @@ func (s *Source) Available() error {
 // ---- rollout event parsing ----
 
 type rolloutEvent struct {
-	Timestamp time.Time `json:"timestamp"`
-	Type      string    `json:"type"`
+	Timestamp time.Time       `json:"timestamp"`
+	Type      string          `json:"type"`
 	Payload   json.RawMessage `json:"payload"`
 }
 
 type sessionMeta struct {
-	SessionID    string `json:"session_id"`
-	Cwd          string `json:"cwd"`
-	Originator   string `json:"originator"`
+	SessionID     string `json:"session_id"`
+	Cwd           string `json:"cwd"`
+	Originator    string `json:"originator"`
 	ModelProvider string `json:"model_provider"`
 }
 
@@ -94,11 +94,11 @@ type tokenUsageRecordPayload struct {
 }
 
 type tokenUsage struct {
-	Input            int64 `json:"input_tokens"`
-	CachedInput      int64 `json:"cached_input_tokens"`
-	CacheWriteInput  int64 `json:"cache_write_input_tokens"`
-	Output           int64 `json:"output_tokens"`
-	ReasoningOutput  int64 `json:"reasoning_output_tokens"`
+	Input           int64 `json:"input_tokens"`
+	CachedInput     int64 `json:"cached_input_tokens"`
+	CacheWriteInput int64 `json:"cache_write_input_tokens"`
+	Output          int64 `json:"output_tokens"`
+	ReasoningOutput int64 `json:"reasoning_output_tokens"`
 }
 
 func (t tokenUsage) toCore() core.TokenUsage {
@@ -160,9 +160,9 @@ func (a *rolloutAccumulator) apply(ev rolloutEvent, model string) (core.TokenUsa
 // ---- file scanning ----
 
 type rolloutFile struct {
-	path  string
-	uuid  string
-	zst   bool
+	path string
+	uuid string
+	zst  bool
 }
 
 func (s *Source) scan(filter core.Filter) ([]rolloutFile, error) {
@@ -260,6 +260,46 @@ func (s *Source) Sessions(filter core.Filter) ([]core.Session, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
 	return out, nil
+}
+
+// Refresh reuses the parse result of every rollout whose path, mtime and
+// size are unchanged. Archived .zst files dominate the cold-start cost, so
+// skipping them on later launches is what keeps the window quick to open.
+// Titles come from a small index file and are refreshed every time.
+func (s *Source) Refresh(prev map[string]core.FileCache) ([]core.Session, map[string]core.FileCache, error) {
+	files, err := s.scan(core.Filter{IncludeArchived: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	index := s.threadNames()
+	next := make(map[string]core.FileCache, len(files))
+	var out []core.Session
+
+	for _, f := range files {
+		state, ok := core.FileStateOf(f.path)
+		if cached, hit := prev[f.path]; ok && hit && cached.State == state {
+			sessions := cached.Sessions
+			for i := range sessions {
+				if t, found := index[sessions[i].ID]; found && t != "" {
+					sessions[i].Title = t
+				}
+			}
+			out = append(out, sessions...)
+			next[f.path] = core.FileCache{State: state, Sessions: sessions}
+			continue
+		}
+		sess, parseErr := s.parse(f)
+		if parseErr != nil {
+			continue
+		}
+		if t, found := index[sess.ID]; found && t != "" {
+			sess.Title = t
+		}
+		out = append(out, sess)
+		next[f.path] = core.FileCache{State: state, Sessions: []core.Session{sess}}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out, next, nil
 }
 
 // threadNames reads session_index.jsonl (id → thread name); best effort.

@@ -10,7 +10,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -48,6 +50,15 @@ type app struct {
 	loading bool
 	loadErr error
 	session []core.Session // all sessions, newest first
+
+	// cache is the on-disk parse snapshot. It lets the window show data
+	// immediately and keeps each session's original cost across price updates.
+	cache *core.SessionCache
+	// reloadPending requests another scan when one is already running, so a
+	// price refresh that lands mid-scan is not lost.
+	reloadPending bool
+	// priceNote is the small source label under the hero number.
+	priceNote string
 
 	period int // index into periods
 
@@ -103,6 +114,14 @@ func windowMain() {
 	a.prices = core.LoadPrices(a.themeDir)
 	a.reg = newRegistry(a.prices)
 
+	// Show the last snapshot before any network or disk scan: with many
+	// archived sessions the first full scan of a new install is still the
+	// slow case, but every later launch starts from cached data.
+	a.cache = core.LoadSessionCache(a.themeDir)
+	a.session = a.cache.Sessions()
+	sort.Slice(a.session, func(i, j int) bool { return a.session[i].Updated.After(a.session[j].Updated) })
+	a.priceNote = priceStatus(a.themeDir)
+
 	// No saved choice means "follow the system"; the first run starts in
 	// the desktop's appearance and later runs in the one the user chose.
 	src := loadTheme(a.themeDir)
@@ -130,6 +149,9 @@ func windowMain() {
 		a.syncAppearance()
 		mygo.Theme.OnUpdated(a.syncAppearance)
 		a.reload()
+		// One price fetch per launch, off the UI thread. A failure is silent:
+		// the cached or built-in table stays in effect.
+		go a.fetchPrices()
 	})
 	if err := mygo.App.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -171,20 +193,42 @@ func (a *app) toggleAppearance() {
 	}
 }
 
-// reload scans every source off the UI thread and publishes through
-// Window.Update.
+// reload requests a scan. A scan already in flight is not cancelled; the
+// request is remembered and run again once it publishes, so a price refresh
+// arriving mid-scan still takes effect on new sessions.
 func (a *app) reload() {
 	if a.loading {
+		a.reloadPending = true
 		return
 	}
+	a.startReload()
+}
+
+// startReload refreshes every source off the UI thread, persists the new
+// snapshot and publishes through Window.Update. Unchanged backing files are
+// reused from the cache, so their historical cost never moves.
+func (a *app) startReload() {
 	a.loading = true
+	a.reloadPending = false
 	win := a.win
 	reg := a.reg
+	var prev map[string]map[string]core.FileCache
+	if a.cache != nil {
+		prev = a.cache.Sources
+	}
+	dir := a.themeDir
 	go func() {
-		sessions, err := reg.AllSessions(core.Filter{IncludeArchived: true})
+		sessions, caches, err := reg.Refresh(prev)
 		sort.Slice(sessions, func(i, j int) bool { return sessions[i].Updated.After(sessions[j].Updated) })
+		if dir != "" {
+			_ = core.SaveSessionCache(dir, core.NewSessionCache(caches))
+		}
 		win.Update(func() {
 			a.session = sessions
+			if a.cache == nil {
+				a.cache = core.NewSessionCache(nil)
+			}
+			a.cache.Sources = caches
 			a.loadErr = err
 			a.loading = false
 			a.chosen.Clear()
@@ -196,8 +240,45 @@ func (a *app) reload() {
 			if a.fSource != "" && !hasSource(sessions, a.fSource) {
 				a.fSource = ""
 			}
+			if a.reloadPending {
+				a.startReload()
+			}
 		})
 	}()
+}
+
+// fetchPrices pulls the public LiteLLM cost map once at launch, stores it
+// under ~/.token-x and swaps it into the live table. Only models the user
+// has not overridden in prices.json change; already-cached sessions keep
+// the cost they were first computed with.
+func (a *app) fetchPrices() {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	client := &http.Client{Timeout: 9 * time.Second}
+	models, source, err := core.FetchOnlinePrices(ctx, client)
+	if err != nil || len(models) == 0 {
+		return
+	}
+	if err := core.SaveOnline(a.themeDir, &core.OnlinePriceFile{
+		FetchedAt: time.Now(), Source: source, Models: models,
+	}); err != nil {
+		return
+	}
+	a.prices.Replace(core.LoadPrices(a.themeDir))
+	win := a.win
+	win.Update(func() {
+		a.priceNote = priceStatus(a.themeDir)
+		a.reload()
+	})
+}
+
+// priceStatus is the short label shown next to the period totals.
+func priceStatus(dir string) string {
+	f := core.LoadOnline(dir)
+	if f == nil || len(f.Models) == 0 {
+		return "价格：内置表"
+	}
+	return "价格：线上 · " + f.FetchedAt.Local().Format("01-02 15:04")
 }
 
 func hasProject(sessions []core.Session, project string) bool {
@@ -286,8 +367,11 @@ func (a *app) header(c *ui.Context, t *ui.Theme) {
 				a.toggleAppearance()
 			}
 		})
-		ui.Text(c, fmt.Sprintf("%s tokens · %d 个 session", fmtTokens(tokens.Total()), count)).
-			FontSize(myui.TextSize(t, myui.TextSm)).TextColor(t.TextMuted)
+		detail := fmt.Sprintf("%s tokens · %d 个 session", fmtTokens(tokens.Total()), count)
+		if a.priceNote != "" {
+			detail += " · " + a.priceNote
+		}
+		ui.Text(c, detail).FontSize(myui.TextSize(t, myui.TextSm)).TextColor(t.TextMuted)
 		if a.loadErr != nil {
 			ui.Text(c, "部分数据读取失败: "+a.loadErr.Error()).
 				FontSize(myui.TextSize(t, myui.TextXs)).TextColor(t.Warning)

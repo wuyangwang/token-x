@@ -211,6 +211,33 @@ func (s *Source) Sessions(_ core.Filter) ([]core.Session, error) {
 	return out, nil
 }
 
+// Refresh reuses unchanged transcripts so old sessions keep the price that
+// was in effect when they were first parsed.
+func (s *Source) Refresh(prev map[string]core.FileCache) ([]core.Session, map[string]core.FileCache, error) {
+	files, err := s.scan()
+	if err != nil {
+		return nil, nil, err
+	}
+	next := make(map[string]core.FileCache, len(files))
+	var out []core.Session
+	for _, f := range files {
+		state, ok := core.FileStateOf(f.path)
+		if cached, hit := prev[f.path]; ok && hit && cached.State == state {
+			out = append(out, cached.Sessions...)
+			next[f.path] = core.FileCache{State: state, Sessions: cached.Sessions}
+			continue
+		}
+		sess, parseErr := s.parse(f)
+		if parseErr != nil {
+			continue
+		}
+		out = append(out, sess)
+		next[f.path] = core.FileCache{State: state, Sessions: []core.Session{sess}}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out, next, nil
+}
+
 type turn struct {
 	model string
 	usage core.TokenUsage

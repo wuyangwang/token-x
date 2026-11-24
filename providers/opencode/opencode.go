@@ -5,8 +5,11 @@ package opencode
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
@@ -118,13 +121,13 @@ func (s *Source) Sessions(filter core.Filter) ([]core.Session, error) {
 	var out []core.Session
 	for rows.Next() {
 		var (
-			sess      core.Session
-			modelJSON string
-			parent    sql.NullString
-			agent     sql.NullString
-			cost      float64
+			sess                 core.Session
+			modelJSON            string
+			parent               sql.NullString
+			agent                sql.NullString
+			cost                 float64
 			createdMS, updatedMS int64
-			directory, worktree string
+			directory, worktree  string
 		)
 		if err := rows.Scan(&sess.ID, &sess.Title, &directory, &worktree,
 			&modelJSON, &agent, &parent,
@@ -156,6 +159,53 @@ func (s *Source) Sessions(filter core.Filter) ([]core.Session, error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
 	return out, nil
+}
+
+// manifest fingerprints the session ids and their update times with one
+// cheap query. The SQLite file itself is unusable as a key because WAL
+// writes and vacuuming change it without changing any session data.
+func (s *Source) manifest() (core.FileState, error) {
+	db, err := s.openRO()
+	if err != nil {
+		return core.FileState{}, err
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT id, time_updated FROM session_v2")
+	if err != nil {
+		return core.FileState{}, err
+	}
+	defer rows.Close()
+	var h hash.Hash64 = fnv.New64a()
+	var id string
+	var updated int64
+	for rows.Next() {
+		if err := rows.Scan(&id, &updated); err != nil {
+			return core.FileState{}, err
+		}
+		_, _ = h.Write([]byte(id))
+		_ = binary.Write(h, binary.LittleEndian, updated)
+	}
+	if err := rows.Err(); err != nil {
+		return core.FileState{}, err
+	}
+	return core.FileState{Size: int64(h.Sum64())}, nil
+}
+
+// Refresh skips the full session query when the manifest still matches.
+// OpenCode stores its own cost, so cached sessions already carry an exact
+// amount that must not be overwritten by a later price-table refresh.
+func (s *Source) Refresh(prev map[string]core.FileCache) ([]core.Session, map[string]core.FileCache, error) {
+	state, err := s.manifest()
+	if err == nil {
+		if cached, hit := prev[s.Name()]; hit && cached.State == state {
+			return cached.Sessions, map[string]core.FileCache{s.Name(): cached}, nil
+		}
+	}
+	sessions, sessionsErr := s.Sessions(core.Filter{})
+	if sessionsErr != nil {
+		return nil, nil, sessionsErr
+	}
+	return sessions, map[string]core.FileCache{s.Name(): {State: state, Sessions: sessions}}, nil
 }
 
 func stringsHasPrefixFold(s, prefix string) bool {

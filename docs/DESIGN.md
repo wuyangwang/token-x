@@ -13,7 +13,7 @@ AI Agent Token 用量管理器 —— 查询、删除本地 AI 编程 agent（Co
 | 语言 | Go 1.27+（纯 Go，无 cgo） | |
 | UI | mygo `package ui`（GPU 自绘原生 UI，无 webview） | `github.com/egoist/mygo` |
 | 组件库 | my-ui（shadcn 风格设计系统，橙色强调色，明暗可切换） | `github.com/wuyangwang/my-ui` |
-| 数据读取 | 实时读取原始数据（v1 不建索引库） | |
+| 数据读取 | 实时读取原始数据 + 按文件快照缓存 | 快照存 `~/.token-x/sessions.json`，不建索引库 |
 | 数据源架构 | `DataSource` 插件接口，实现 codex / opencode / claude / gemini | |
 | 界面语言 | 中文（zh-Hans） | |
 | 金额币种 | USD（模型计价口径，不做汇率换算） | |
@@ -40,7 +40,9 @@ token-x/
 │   ├── datasource.go        # DataSource 接口（插件接入点）
 │   ├── types.go             # Session / UsageRecord / DailyStat 等领域类型
 │   ├── aggregate.go         # 聚合：按天、按模型、按项目
-│   └── prices.go            # 价格表：默认值 + 用户配置合并
+│   ├── prices.go            # 价格表：内置 → 线上 → 用户配置 分层合并
+│   ├── prices_online.go     # LiteLLM 价格源拉取、容错、落盘缓存
+│   └── cache.go             # session 快照缓存（按 backing 文件校验）
 ├── providers/
 │   ├── codex/               # rollout JSONL 解析、.zst、删除
 │   └── opencode/            # SQLite 只读查询、CLI 删除
@@ -172,10 +174,12 @@ token 分类：`input_tokens`、`cached_input_tokens`（缓存读，计费折扣
 }
 ```
 
-- 单价单位：USD / 百万 token。默认值为 OpenAI 官方价的占位，用户可直接编辑 `~/.token-x/prices.json` 修改（无需设置页，改完点刷新）。
-- 金额 = `input × 单价 + cachedInput × 折扣价 + cacheWrite × 单价 + output × 单价`（reasoning 已含在 output 内）。
-- 未知模型用 `fallback` 价。UI 不再显示"估算"标记；价格表估算与 agent 自带 cost 在表格里一视同仁。
-- codex / gemini 走价格表估算；claude 优先用 transcript 中的 `costUSD`；opencode 本机 cost 为 0。
+- 单价单位：USD / 百万 token。金额 = `input × 单价 + cachedInput × 折扣价 + cacheWrite × 单价 + output × 单价`（reasoning 已含在 output 内）。
+- **价格分三层叠加**：内置默认 < 线上缓存 < `~/.token-x/prices.json`。线上源是 LiteLLM 的 `model_prices_and_context_window.json`（GitHub raw，失败则走 jsDelivr），每次启动后台拉一次，存 `~/.token-x/prices-online.json`。用户文件始终最高优先级，线上刷新不会覆盖用户手改的价格。
+- 拉取失败（离线 / 网络受限）静默使用上次缓存或内置默认；不阻塞窗口、不报错。只发一个静态 JSON 的 GET，绝不上传 session 内容。
+- **历史金额不可变**：session 快照里保存首次解析时的成本。按 backing 文件的 `mtime + size` 校验，未变化的文件直接复用缓存，不会因价格表更新而重算历史 session。只有新文件或内容真的变了才用当前价格解析。
+- agent 自带花费优先：opencode 的 `cost`、Claude 的 `costUSD` 记为 `Estimated=false`，即使价格表变化也以记录值为准；codex / gemini / workbuddy 走价格表估算。
+- 未知模型用 `fallback` 价。UI 中顶部一行会显示当前价格来源（内置 / 线上 + 更新时间）。
 
 ---
 
@@ -204,8 +208,10 @@ token 分类：`input_tokens`、`cached_input_tokens`（缓存读，计费折扣
 | opencode.db schema 随版本变化（当前 v2.3.0） | SQL 查询集中在 `providers/opencode/` 单文件；启动时检测 `session_v2` 关键列，缺失则提示版本不兼容 |
 | codex 版本演进改变 rollout 事件结构 | 解析按事件 type 分派，未知 type 忽略；token 记账同时支持 `token_count` 差值与 `token_usage_record` 两种路径 |
 | opencode 正在运行时读库 | 只读模式 + WAL 下读取是安全的；写操作全走 CLI |
-| codex `.zst` 逐次解压开销 | 扫描在后台 goroutine + 界面 loading 态；按 UUID 去重避免双份 |
-| 中转站价格不可知 | 价格表可编辑 + "估算"标注，文档明示 |
+| codex `.zst` 逐次解压开销 | 首次全量扫描在后台 + loading 态；之后按 `mtime+size` 复用快照，只解析变化的文件；按 UUID 去重避免双份 |
+| 中转站价格不可知 | 价格表可编辑 + "估算"标注，文档明示；线上价只作为可覆盖的一层 |
+| 拉价格时网络不可用 | 备用 jsDelivr CDN；再失败则用本地缓存 / 内置价，完全不影响本地数据读取 |
+| 线上价更新想改历史金额 | 不允许：缓存冻结历史 session 成本，只有新会话/变化文件才用新价 |
 
 ---
 

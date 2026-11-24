@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ func TestRolloutUUID(t *testing.T) {
 	cases := map[string]string{
 		"rollout-2026-11-17T01-25-03-01a1e71a-b6e4-7493-b7c1-af454b18825d.jsonl":     "01a1e71a-b6e4-7493-b7c1-af454b18825d",
 		"rollout-2026-11-17T01-25-03-01a1e71a-b6e4-7493-b7c1-af454b18825d.jsonl.zst": "01a1e71a-b6e4-7493-b7c1-af454b18825d",
-		"index.jsonl": "",
+		"index.jsonl":         "",
 		"rollout-short.jsonl": "",
 	}
 	for name, want := range cases {
@@ -57,6 +58,50 @@ func TestAccumulatorDelta(t *testing.T) {
 	inc, ok = acc.apply(rolloutEvent{Type: "event_msg", Payload: json.RawMessage(`{"type":"task_started"}`)}, "m")
 	if ok {
 		t.Fatalf("task_started produced usage %+v", inc)
+	}
+}
+
+func TestRefreshReusesUnchangedRollout(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "11", "17")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "rollout-2026-11-17T10-00-00-01a1e71a-b6e4-7493-b7c1-af454b18825d.jsonl")
+	lines := []string{
+		`{"timestamp":"2026-11-17T10:00:00Z","type":"session_meta","payload":{"session_id":"01a1e71a-b6e4-7493-b7c1-af454b18825d","cwd":"E:/work/demo"}}`,
+		`{"timestamp":"2026-11-17T10:01:00Z","type":"turn_context","payload":{"turn_id":"t1","model":"gpt-6.1-sol"}}`,
+		`{"timestamp":"2026-11-17T10:02:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20}}}}`,
+	}
+	body := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prices := core.DefaultPrices()
+	prices.Models["gpt-6.1-sol"] = core.ModelPrice{Input: 1, Output: 1}
+	s := New(home, prices)
+	sessions, cache, err := s.Refresh(nil)
+	if err != nil || len(sessions) != 1 || sessions[0].Cost.Amount <= 0 {
+		t.Fatalf("first refresh: %+v %v", sessions, err)
+	}
+	original := sessions[0].Cost.Amount
+
+	// A newer online table must not reprice a file that has not changed.
+	prices.Models["gpt-6.1-sol"] = core.ModelPrice{Input: 100, Output: 100}
+	sessions, cache, err = s.Refresh(cache)
+	if err != nil || len(sessions) != 1 || sessions[0].Cost.Amount != original {
+		t.Fatalf("unchanged rollout was repriced: %+v %v", sessions, err)
+	}
+
+	// A real change to the transcript is parsed again with the new price.
+	extra := `{"timestamp":"2026-11-17T10:03:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"output_tokens":40}}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body+extra), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessions, _, err = s.Refresh(cache)
+	if err != nil || len(sessions) != 1 || sessions[0].Cost.Amount <= original {
+		t.Fatalf("changed rollout was not reparsed: %+v %v", sessions, err)
 	}
 }
 
